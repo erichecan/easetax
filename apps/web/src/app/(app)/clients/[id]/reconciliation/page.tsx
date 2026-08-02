@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
-import { getClient } from "@/lib/queries";
-import { reconcile, bankStatementMonth } from "@/lib/mock";
+import { getClient, getReconciliation } from "@/lib/queries";
 import { Reconciliation } from "@/components/reconciliation";
 
 export default async function ReconciliationPage({
@@ -13,7 +12,7 @@ export default async function ReconciliationPage({
   const { id } = await params;
   const client = await getClient(session.firmId, id);
   if (!client) notFound();
-  const rows = reconcile(id);
+  const { rows, period } = await getReconciliation(session.firmId, id);
 
-  return <Reconciliation client={client} rows={rows} month={bankStatementMonth} />;
+  return <Reconciliation client={client} rows={rows} period={period} />;
 }

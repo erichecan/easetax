@@ -1,14 +1,7 @@
-import { notFound } from "next/navigation";
-import { requireSession } from "@/lib/session";
-import { getClient, getClientDocuments } from "@/lib/queries";
-import { DocumentQueue } from "@/components/document-queue";
+import { redirect } from "next/navigation";
 
-export default async function DocumentsPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await requireSession();
+// 单据队列已并入按流程编排的客户工作台；保留此路由，旧链接不 404。
+export default async function DocumentsRedirect({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const client = await getClient(session.firmId, id);
-  if (!client) notFound();
-  const docs = await getClientDocuments(session.firmId, id);
-
-  return <DocumentQueue client={client} docs={docs} />;
+  redirect(`/clients/${id}`);
 }

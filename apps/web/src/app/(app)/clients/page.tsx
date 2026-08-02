@@ -26,7 +26,7 @@ export default async function ClientsPage() {
         {clients.map((c) => (
           <Link
             key={c.id}
-            href={`/clients/${c.id}/documents`}
+            href={`/clients/${c.id}`}
             className="rise group rounded-xl border border-line bg-surface p-5 transition-all hover:border-line-strong hover:shadow-[0_2px_16px_-4px_rgba(31,77,63,0.12)]"
           >
             <div className="flex items-start justify-between">
@@ -47,10 +47,11 @@ export default async function ClientsPage() {
             <h2 className="mt-4 font-medium text-ink-900">{c.name}</h2>
             <p className="text-xs text-faint">{c.industry}</p>
 
+            {/* 口径与工作台的流程轨道一致：机器在跑的 / 等你动手的 / 已完成的 */}
             <div className="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-4">
-              <Stat label="新到" value={c.stats.inbox} tone="text-muted" />
-              <Stat label="待复核" value={c.stats.review} tone={c.stats.review > 0 ? "text-gold-700" : "text-faint"} />
-              <Stat label="已录入" value={c.stats.synced} tone="text-conf-high" />
+              <Stat label="①–③ 处理中" value={c.stats.inbox} tone="text-muted" />
+              <Stat label="④ 待复核" value={c.stats.review} tone={c.stats.review > 0 ? "text-gold-700" : "text-faint"} />
+              <Stat label="⑤ 已录入" value={c.stats.synced} tone="text-conf-high" />
             </div>
           </Link>
         ))}

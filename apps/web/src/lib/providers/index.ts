@@ -6,3 +6,5 @@ export * from "./classifier";
 export * from "./rule-matcher";
 export * from "./classify-line";
 export * from "./classifier-factory";
+export * from "./qbo";
+export * from "./qbo-factory";

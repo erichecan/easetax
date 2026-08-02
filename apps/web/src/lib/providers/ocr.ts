@@ -21,6 +21,12 @@ export type OcrExtraction = {
   subTotal: DecimalString | null;
   taxAmount: DecimalString | null;
   total: DecimalString | null;
+  // CRA 抵扣凭证要件（契约 §4.9）——决定这笔 ITC 能不能抵，不是可选的锦上添花。
+  supplierTaxNumber: string | null; // 供应商 GST/HST 登记号
+  recipientName: string | null; // 购方名称
+  paymentTerms: string | null; // 付款条款
+  // 付款状态线索（契约 G9）：provider 能判就给，判不了给 null，由复核人定。
+  settlementHint: "paid" | "unpaid" | null;
   lines: OcrLine[];
   overallConfidence: Confidence; // 落 provider 判定；doc 级 confidence 仍由 §4.7 派生
   fieldConfidence: Record<string, number>; // 原始字段级分数 → Extraction.fieldConfidence(Json)

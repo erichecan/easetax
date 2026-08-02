@@ -10,6 +10,12 @@ export default async function ReviewPage({ params }: { params: Promise<{ id: str
   if (!data) notFound();
 
   return (
-    <ReviewWorkbench doc={data.doc} client={data.client} accounts={data.accounts} ocrText={data.ocrText} />
+    <ReviewWorkbench
+      doc={data.doc}
+      client={data.client}
+      accounts={data.accounts}
+      taxCodes={data.taxCodes}
+      ocrText={data.ocrText}
+    />
   );
 }

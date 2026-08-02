@@ -2,7 +2,14 @@
 // DB + Provider 编排层，不含 HTTP/Next。上传路由与后台任务都调这里。
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { assertTransition, rollupConfidence, type Confidence, type DocSource, type DocStatus } from "@/domain";
+import {
+  assertTransition,
+  resolveTaxTreatment,
+  rollupConfidence,
+  type Confidence,
+  type DocSource,
+  type DocStatus,
+} from "@/domain";
 import { fileHash, validateUpload } from "@/lib/intake/file-validation";
 import {
   classifyLine,
@@ -87,6 +94,23 @@ export async function ingestDocument(input: IngestInput): Promise<IngestResult> 
 
 export type ProcessResult = { status: DocStatus; lines: number; docConfidence?: Confidence };
 
+// 可重跑的状态（契约 §4.1 重跑边）。confirmed 之后人工结果即权威，要重跑先退回 needs_review。
+export const REPROCESSABLE: readonly DocStatus[] = ["needs_review", "ocr_failed"];
+
+// 重跑：销毁上一次识别结果（Extraction + LineItem）后重走 OCR→分类。
+// 用于 OCR/分类能力升级（如接入 Claude）后重跑存量单据，无需客户重传。
+export async function reprocessDocument(documentId: string, userId = SYSTEM_USER): Promise<ProcessResult> {
+  const record = await prisma.document.findUniqueOrThrow({ where: { id: documentId } });
+  if (!REPROCESSABLE.includes(record.status as DocStatus)) {
+    throw new Error(`当前状态「${record.status}」不可重跑`);
+  }
+
+  // 不预删旧结果：processDocument 在 OCR/分类成功后才替换，失败则保留上一次的可用数据。
+  await audit(record.firmId, userId, documentId, "reprocess", { from: record.status });
+
+  return processDocument(documentId, userId);
+}
+
 // 处理：OCR → Extraction，逐行分类 → LineItem，落到 needs_review。
 export async function processDocument(documentId: string, userId = SYSTEM_USER): Promise<ProcessResult> {
   const record = await prisma.document.findUniqueOrThrow({ where: { id: documentId } });
@@ -113,21 +137,33 @@ export async function processDocument(documentId: string, userId = SYSTEM_USER):
     return { status: "ocr_failed", lines: 0 };
   }
 
-  await prisma.extraction.create({
-    data: {
-      documentId,
-      rawJson: ocr.raw as Prisma.InputJsonValue,
-      vendorName: ocr.vendorName,
-      invoiceNo: ocr.invoiceNo,
-      txnDate: ocr.txnDate ? new Date(ocr.txnDate) : null,
-      dueDate: ocr.dueDate ? new Date(ocr.dueDate) : null,
-      currency: ocr.currency,
-      subTotal: ocr.subTotal,
-      taxAmount: ocr.taxAmount,
-      total: ocr.total,
-      fieldConfidence: ocr.fieldConfidence as Prisma.InputJsonValue,
-    },
-  });
+  // 重跑时替换上一次识别结果：**先 OCR 成功再删**，OCR 失败则旧结果原样保留。
+  await prisma.$transaction([
+    prisma.extraction.deleteMany({ where: { documentId } }),
+    prisma.extraction.create({
+      data: {
+        documentId,
+        rawJson: ocr.raw as Prisma.InputJsonValue,
+        vendorName: ocr.vendorName,
+        invoiceNo: ocr.invoiceNo,
+        txnDate: ocr.txnDate ? new Date(ocr.txnDate) : null,
+        dueDate: ocr.dueDate ? new Date(ocr.dueDate) : null,
+        currency: ocr.currency,
+        subTotal: ocr.subTotal,
+        taxAmount: ocr.taxAmount,
+        total: ocr.total,
+        supplierTaxNumber: ocr.supplierTaxNumber,
+        recipientName: ocr.recipientName,
+        paymentTerms: ocr.paymentTerms,
+        fieldConfidence: ocr.fieldConfidence as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
+
+  // 付款状态：OCR 给初值，人工可改（契约 G9）。已人工设过的不覆盖。
+  if (ocr.settlementHint && !record.settlement) {
+    await prisma.document.update({ where: { id: documentId }, data: { settlement: ocr.settlementHint } });
+  }
   await transitionTo(doc, "ocr_done", userId);
   await transitionTo(doc, "classifying", userId);
 
@@ -151,8 +187,16 @@ export async function processDocument(documentId: string, userId = SYSTEM_USER):
       ? { glAccountId: suggAcct.qboAccountId, glAccountName: suggAcct.name, score: ocr.suggestedCategory.score }
       : null;
 
+  // 税码语义键 → 该客户 QBO 实际 TaxCode.Id（契约 §4.8）。表为空时全部行留空税码 → 强制人工。
+  const taxCodeByKey = new Map(
+    (await prisma.taxCodeCache.findMany({ where: { clientId: record.clientId } }))
+      .filter((t) => t.semanticKey)
+      .map((t) => [t.semanticKey!, t.qboTaxCodeId]),
+  );
+
   const classifier = getClassifier();
   const confidences: Confidence[] = [];
+  const lineRows: Prisma.LineItemCreateManyInput[] = [];
   for (const line of ocr.lines) {
     const c = await classifyLine(
       {
@@ -165,18 +209,34 @@ export async function processDocument(documentId: string, userId = SYSTEM_USER):
       rules,
       classifier,
     );
-    confidences.push(c.confidence);
-    await prisma.lineItem.create({
-      data: {
-        documentId,
-        description: line.description,
-        amount: line.amount,
-        glAccountId: c.glAccountId,
-        glAccountName: c.glAccountName,
-        confidence: c.confidence,
-      },
+
+    // 税码走确定性规则，AI 不参与（契约 G10）。未命中 → 留空 + 降为 low，逼人工处理。
+    const rule = resolveTaxTreatment({
+      glAccountName: c.glAccountName,
+      docTaxAmount: ocr.taxAmount == null ? null : Number(ocr.taxAmount),
+      supplierTaxNumber: ocr.supplierTaxNumber,
+      docTotal: ocr.total == null ? null : Number(ocr.total),
+    });
+    const taxCode = rule.treatment ? (taxCodeByKey.get(rule.treatment) ?? null) : null;
+    const confidence: Confidence = taxCode ? c.confidence : "low";
+
+    confidences.push(confidence);
+    lineRows.push({
+      documentId,
+      description: line.description,
+      amount: line.amount,
+      glAccountId: c.glAccountId,
+      glAccountName: c.glAccountName,
+      taxCode,
+      confidence,
     });
   }
+
+  // 同上：分类全部完成后才替换旧行，中途失败不留半套数据。
+  await prisma.$transaction([
+    prisma.lineItem.deleteMany({ where: { documentId } }),
+    prisma.lineItem.createMany({ data: lineRows }),
+  ]);
 
   // 文档级 confidence 派生（契约 §4.7），仅入审计，不物化在 Document 上。
   const docConfidence = rollupConfidence(confidences.length ? confidences : ["low"]);

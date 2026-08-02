@@ -1,6 +1,10 @@
 import { LoginForm } from "@/components/login-form";
+import { devLoginAccounts } from "@/lib/dev-login";
 
 export default function LoginPage() {
+  // 在 server component 里取：生产环境返回空数组，凭据不会进前端包
+  const devAccounts = devLoginAccounts();
+
   return (
     <div className="grid min-h-screen place-items-center bg-paper px-4">
       <div className="w-full max-w-sm">
@@ -16,7 +20,7 @@ export default function LoginPage() {
         <div className="rounded-2xl border border-line bg-surface p-6 shadow-[0_2px_24px_-8px_rgba(31,77,63,0.12)]">
           <h1 className="font-display text-xl font-bold text-ink-900">登录</h1>
           <p className="mt-1 text-sm text-muted">会计师工作台</p>
-          <LoginForm />
+          <LoginForm devAccounts={devAccounts} />
         </div>
       </div>
     </div>

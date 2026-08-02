@@ -2,6 +2,7 @@
 // 上层只依赖 StorageProvider 接口，切换实现不动业务代码（契约「Provider 抽象」）。
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { GcsStorageProvider } from "./storage-gcs";
 
 export interface StorageProvider {
   readonly name: string;
@@ -47,16 +48,27 @@ export class LocalDiskStorageProvider implements StorageProvider {
   }
 }
 
-// TODO(P6/上线)：GcsStorageProvider（northamerica-northeast1，满足 PIPEDA）。
-// 接口不变，仅新增一个实现 + 在 factory 里按 env 选择。
-
 let cached: StorageProvider | null = null;
 
+// 选择实现：配了 GCS_BUCKET 走 GCS，否则本地磁盘（仅 dev）。
+// ⛔ 生产强制 GCS：Cloud Run 容器文件系统是临时的，实例回收即丢原件。
 export function getStorageProvider(): StorageProvider {
   if (cached) return cached;
-  // 目前只有本地实现；GCS 到位后按 env（如 STORAGE_BACKEND=gcs）分支。
-  cached = new LocalDiskStorageProvider();
+  const bucket = process.env.GCS_BUCKET;
+  if (bucket) {
+    cached = new GcsStorageProvider(bucket, process.env.GCP_PROJECT_ID);
+  } else {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("生产环境必须配置 GCS_BUCKET：本地磁盘存储会随实例回收丢失原件");
+    }
+    cached = new LocalDiskStorageProvider();
+  }
   return cached;
+}
+
+// 测试/多租户场景可注入替身（与 OCR/Classifier factory 一致）。
+export function setStorageProvider(p: StorageProvider | null): void {
+  cached = p;
 }
 
 // 生成存储 key：按客户/日期分目录，避免单目录爆量。

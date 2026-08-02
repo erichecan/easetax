@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { ingestDocument, processDocument } from "@/lib/pipeline/ingest";
+import { maybeAutoPost } from "@/lib/pipeline/auto-post";
 import type { DocStatus } from "@/domain";
 
 export async function POST(req: Request) {
@@ -30,11 +31,18 @@ export async function POST(req: Request) {
       userId: s.userId,
     });
     let status: DocStatus | "duplicate_suspected" = "duplicate_suspected";
+    let autoPosted = false;
     if (!ing.duplicate) {
       const r = await processDocument(ing.documentId, s.userId);
       status = r.status;
+      // 绿色通道：够格就自动确认并录入（契约 §4.10）。失败只是退回人工，不影响单据。
+      if (r.status === "needs_review") {
+        const auto = await maybeAutoPost(ing.documentId);
+        autoPosted = auto.confirmed;
+        if (auto.confirmed) status = auto.synced ? "synced" : "confirmed";
+      }
     }
-    return Response.json({ documentId: ing.documentId, duplicate: ing.duplicate, status });
+    return Response.json({ documentId: ing.documentId, duplicate: ing.duplicate, status, autoPosted });
   } catch (e) {
     console.error("[upload] 处理失败", e);
     return Response.json({ error: e instanceof Error ? e.message : "处理失败" }, { status: 400 });

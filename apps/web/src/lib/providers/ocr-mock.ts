@@ -22,8 +22,17 @@ export class MockOcrProvider implements OcrProvider {
     const d = new Date();
     const iso = (dt: Date) => dt.toISOString().slice(0, 10);
 
+    // 凭证要件按 seed 三分：齐全 / 缺 GST 号（$30 以上就抵不了）/ 缺购方与条款（$150 以上抵不了）。
+    // 目的：让复核队列的凭证风险排序在 mock 数据下也能被看见。
+    const docFlavor = seed % 3;
+    const paid = seed % 2 === 0;
+
     return {
       vendorName: vendor,
+      supplierTaxNumber: docFlavor === 1 ? null : `${100000000 + (seed % 899999999)}RT0001`,
+      recipientName: docFlavor === 2 ? null : "Maple Leaf Dental",
+      paymentTerms: docFlavor === 2 ? null : paid ? "Paid by card" : "Net 30",
+      settlementHint: paid ? "paid" : "unpaid",
       invoiceNo: `MOCK-${(seed % 100000).toString().padStart(5, "0")}`,
       txnDate: iso(d),
       dueDate: iso(new Date(d.getTime() + 30 * 86_400_000)),

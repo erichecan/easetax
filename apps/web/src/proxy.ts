@@ -37,7 +37,11 @@ export async function proxy(req: NextRequest) {
 
   // 其余为受保护页面
   if (!authed) return NextResponse.redirect(new URL("/login", req.url));
-  return NextResponse.next();
+  // 把路径透给 server layout：侧边栏要据此判断当前在哪个客户下
+  // （复核页 /documents/:id/review 的 URL 里没有 clientId）。
+  const headers = new Headers(req.headers);
+  headers.set("x-pathname", pathname);
+  return NextResponse.next({ request: { headers } });
 }
 
 export const config = {

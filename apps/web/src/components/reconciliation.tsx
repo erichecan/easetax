@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Client, ReconRow } from "@/lib/types";
 
 const money = (n: number) =>
@@ -10,21 +11,49 @@ const money = (n: number) =>
 export function Reconciliation({
   client,
   rows,
-  month,
+  period,
 }: {
   client: Client;
   rows: ReconRow[];
-  month: string;
+  period: string;
 }) {
-  const [reminded, setReminded] = useState<Set<string>>(new Set());
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ subject: string; body: string; recipient: string; delivered: boolean } | null>(
+    null,
+  );
 
-  const missing = rows.filter((r) => !r.matchedDocId);
+  // 追票：生成催票内容并落记录。没有配邮件通道时只出草稿，由会计师自己发（不假装已发送）。
+  async function chase(txnIds: string[], key: string) {
+    if (busy) return;
+    setBusy(key);
+    setError(null);
+    try {
+      const res = await fetch(`/api/clients/${client.id}/chase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ txnIds }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(j.error ?? "追票失败");
+        return;
+      }
+      setDraft({ subject: j.subject, body: j.body, recipient: j.recipient, delivered: j.delivered });
+      router.refresh();
+    } catch {
+      setError("网络错误");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // ignored = 会计师已判定「无需收据」，不进缺口清单。
+  const missing = rows.filter((r) => r.matchKind === "none");
   const matched = rows.filter((r) => r.matchedDocId);
   const totalSpend = rows.reduce((s, r) => s + r.txn.amount, 0);
   const missingSpend = missing.reduce((s, r) => s + r.txn.amount, 0);
-
-  const remind = (id: string) =>
-    setReminded((prev) => new Set(prev).add(id));
 
   return (
     <div className="mx-auto max-w-6xl px-8 py-8">
@@ -37,16 +66,67 @@ export function Reconciliation({
             ← {client.name} · 单据队列
           </Link>
           <h1 className="mt-2 font-display text-2xl font-bold text-ink-900">
-            银行对账 · {month}
+            银行对账{period && ` · ${period}`}
           </h1>
           <p className="mt-1 text-sm text-muted">
-            把银行流水逐笔和本月已收单据对照，找出没有收据支撑的支出。
+            把银行流水逐笔和已收单据对照，找出没有收据支撑的支出。
           </p>
         </div>
       </header>
 
+      {rows.length === 0 && (
+        <div className="mt-6 rounded-xl border border-dashed border-line bg-surface px-6 py-16 text-center">
+          <div className="font-medium text-ink-900">该客户还没有银行流水</div>
+          <p className="mt-1.5 text-sm text-muted">
+            导入银行对账单后，这里会逐笔和已收单据比对，列出缺收据的支出。
+          </p>
+        </div>
+      )}
+
+      {draft && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/40 p-4" onClick={() => setDraft(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-line bg-surface p-6 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-display text-lg font-bold text-ink-900">催票内容已生成</h3>
+                <p className="mt-1 text-sm text-muted">
+                  {draft.delivered ? (
+                    <>已发送至 <span className="font-mono">{draft.recipient}</span>，并记入追票历史。</>
+                  ) : (
+                    <>
+                      当前未接邮件通道，<strong>没有真的发送</strong>。内容已记入追票历史，请复制后自行发给客户。
+                    </>
+                  )}
+                </p>
+              </div>
+              <button onClick={() => setDraft(null)} className="shrink-0 rounded-md px-2 py-1 text-sm text-muted hover:text-ink-900">
+                关闭
+              </button>
+            </div>
+            <div className="mt-4 rounded-lg border border-line bg-paper p-3">
+              <div className="text-[11px] text-faint">主题</div>
+              <div className="text-sm font-medium text-ink-900">{draft.subject}</div>
+            </div>
+            <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-paper p-3 text-xs leading-relaxed text-ink-900">
+              {draft.body}
+            </pre>
+            <button
+              onClick={() => navigator.clipboard?.writeText(`${draft.subject}\n\n${draft.body}`)}
+              className="mt-3 rounded-lg bg-ink-700 px-4 py-2 text-sm font-semibold text-white hover:bg-ink-800"
+            >
+              复制全文
+            </button>
+          </div>
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <>
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <Tile label="本月银行支出" value={`${rows.length} 笔`} sub={money(totalSpend)} tone="text-ink-900" />
+        <Tile label="银行支出" value={`${rows.length} 笔`} sub={money(totalSpend)} tone="text-ink-900" />
         <Tile label="已匹配收据" value={`${matched.length} 笔`} sub="有收据支撑" tone="text-conf-high" />
         <Tile
           label="缺收据"
@@ -59,14 +139,22 @@ export function Reconciliation({
 
       {/* 缺收据清单 —— 核心产出 */}
       <section className="mt-7">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-lg font-bold text-ink-900">
-            缺收据清单
-          </h2>
-          <span className="text-xs text-faint">
-            这些银行支出找不到对应收据，需向客户追票
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-lg font-bold text-ink-900">缺收据清单</h2>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-faint">这些银行支出找不到对应收据，需向客户追票</span>
+            {missing.length > 0 && (
+              <button
+                onClick={() => chase(missing.map((r) => r.txn.id), "all")}
+                disabled={busy !== null}
+                className="rounded-lg bg-ink-700 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-ink-800 disabled:opacity-50"
+              >
+                {busy === "all" ? "生成中…" : `一次催全部（${missing.length} 笔）`}
+              </button>
+            )}
+          </div>
         </div>
+        {error && <div className="mt-2 rounded-lg bg-conf-low-bg px-3 py-2 text-xs text-conf-low">{error}</div>}
         <div className="mt-3 overflow-hidden rounded-xl border border-conf-low/30 bg-surface">
           {missing.length === 0 ? (
             <div className="px-4 py-10 text-center text-sm text-conf-high">
@@ -83,37 +171,32 @@ export function Reconciliation({
                 </tr>
               </thead>
               <tbody>
-                {missing.map((r) => {
-                  const done = reminded.has(r.txn.id);
-                  return (
-                    <tr key={r.txn.id} className="border-b border-line last:border-0">
-                      <td className="tnum px-4 py-3 text-muted">{r.txn.date}</td>
-                      <td className="px-4 py-3">
-                        <span className="font-mono text-ink-900">{r.txn.description}</span>
-                        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-conf-low-bg px-2 py-0.5 text-[10px] font-semibold text-conf-low">
-                          缺收据
+                {missing.map((r) => (
+                  <tr key={r.txn.id} className="border-b border-line last:border-0">
+                    <td className="tnum px-4 py-3 text-muted">{r.txn.date}</td>
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-ink-900">{r.txn.description}</span>
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-conf-low-bg px-2 py-0.5 text-[10px] font-semibold text-conf-low">
+                        缺收据
+                      </span>
+                      {r.chaseCount > 0 && (
+                        <span className="ml-2 text-[11px] text-faint">
+                          已催 {r.chaseCount} 次 · 最近 {r.lastChasedAt}
                         </span>
-                      </td>
-                      <td className="tnum px-4 py-3 text-right font-medium text-ink-900">
-                        {money(r.txn.amount)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {done ? (
-                          <span className="text-xs font-medium text-conf-high">
-                            ✓ 已提醒
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => remind(r.txn.id)}
-                            className="rounded-md border border-line px-2.5 py-1 text-xs font-semibold text-ink-700 transition-colors hover:bg-ink-700/10"
-                          >
-                            提醒客户补单
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                      )}
+                    </td>
+                    <td className="tnum px-4 py-3 text-right font-medium text-ink-900">{money(r.txn.amount)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => chase([r.txn.id], r.txn.id)}
+                        disabled={busy !== null}
+                        className="rounded-md border border-line px-2.5 py-1 text-xs font-semibold text-ink-700 transition-colors hover:bg-ink-700/10 disabled:opacity-50"
+                      >
+                        {busy === r.txn.id ? "生成中…" : r.chaseCount > 0 ? "再催一次" : "提醒客户补单"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           )}
@@ -151,8 +234,13 @@ export function Reconciliation({
                         className="inline-flex items-center gap-1.5 text-conf-high transition-colors hover:underline"
                       >
                         <span className="size-1.5 rounded-full bg-conf-high" />
-                        已匹配 · {r.matchedFileName}
+                        {r.matchKind === "manual" ? "已确认" : "自动匹配"} · {r.matchedFileName}
                       </Link>
+                    ) : r.matchKind === "ignored" ? (
+                      <span className="inline-flex items-center gap-1.5 text-faint">
+                        <span className="size-1.5 rounded-full bg-faint" />
+                        已标记无需收据
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 text-conf-low">
                         <span className="size-1.5 rounded-full bg-conf-low" />
@@ -166,6 +254,8 @@ export function Reconciliation({
           </table>
         </div>
       </section>
+        </>
+      )}
     </div>
   );
 }

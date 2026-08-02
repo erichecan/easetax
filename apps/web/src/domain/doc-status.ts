@@ -26,7 +26,8 @@ const TRANSITIONS: Record<DocStatus, readonly DocStatus[]> = {
   ocr_failed: ["ocr_processing", "rejected"], // 可重试
   ocr_done: ["classifying"],
   classifying: ["needs_review"],
-  needs_review: ["confirmed", "rejected", "duplicate_suspected"],
+  // ocr_processing：重跑（reprocess）——OCR/分类能力升级后重跑存量单据（契约 §4.1）
+  needs_review: ["confirmed", "rejected", "duplicate_suspected", "ocr_processing"],
   duplicate_suspected: ["needs_review", "rejected"], // 人工判非重复可回主链
   confirmed: ["syncing_qbo", "needs_review"], // 可退回再改
   syncing_qbo: ["synced", "sync_failed"],

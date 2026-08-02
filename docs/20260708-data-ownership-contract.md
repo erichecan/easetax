@@ -47,6 +47,8 @@
 | G6 | **税额权威** | 我方计算的税/总额 = **预览估算（derived，非权威）**；QBO 落账后以 QBO 税额为准。 | 两边都算会因舍入不一致，预览 total ≠ QBO total。 |
 | G7 | **共享类型单一来源** | `DocStatus / Confidence / 税码 / 科目 id` 只允许从 `packages/domain`（或 Prisma 生成类型）导入。`apps/web/src/lib/types.ts` 改为 re-export，不得平行定义。 | 前端已在用自己的枚举，这是漏洞入口。 |
 | G8 | **每查询强制带 `firmId`** | 所有业务表带 `firmId`，所有查询 `where firmId = 当前用户firm`（行级租户隔离）。 | 沿用 PRD 要求，防跨租户越权。 |
+| G9 | **QBO 对象形态由付款状态决定**（2026-08-02 追加） | **已付**（收据/刷卡/现金）→ QBO **Purchase/Expense**，直接冲银行或信用卡；**未付**（有账期的发票）→ QBO **Bill** 挂 AP。付款状态 canonical 落 `Document.settlement`，OCR 给初值、会计师可改。 | 一律记 Bill 会凭空虚增应付账款、银行对不上；这是竞品 Dext "Publish to" 的核心分叉。见 [业务流程设计 §2.5](20260802-业务流程设计.md)。 |
+| G10 | **税码不由 AI 裁定**（2026-08-02 追加） | `LineItem.taxCode` 只能来自**确定性税码规则表**（§4.8）。AI 只负责**抽取**（税额、供应商 GST/HST 号、省份）与**科目建议**，不产出税码。规则表未命中 → 留空 + 强制人工，**不允许猜**。 | 科目记错可改可学，税码记错是税务风险（ITC 多抵/漏抵）；且加拿大税规则本身是确定的，没有推断的必要。 |
 
 ---
 
@@ -150,6 +152,9 @@ received → ocr_processing → ocr_done → classifying → needs_review
 - 这是**唯一**合法枚举。删除 demo 的 `processing / syncing / duplicate / failed` 四个别名。
 - 每次跃迁写 `AuditLog`。**非法转移抛错**（如 `received → synced` 不允许）。
 - `duplicate_suspected` / `sync_failed` 可人工/重试回到主链；`ocr_failed`、`rejected` 为待人工终态。
+- **重跑（reprocess）边：`needs_review → ocr_processing`**（2026-08-02 追加）。用途：OCR/分类能力升级后，存量单据不重传即可重跑。重跑**销毁并重建** `Extraction` + `LineItem`（它们的权威是最近一次识别，非累积），因此：
+  - `confirmed` 及之后**不可**重跑（人工分类结果已是权威，要重跑先退回 `needs_review`）；`synced` 后 QBO 权威（G5），永不重跑。
+  - `ocr_failed → ocr_processing` 早已允许（失败重试），语义相同，走同一条代码路径。
 
 ### 4.2 "客户未连 QBO" 是一等状态
 
@@ -181,6 +186,67 @@ received → ocr_processing → ocr_done → classifying → needs_review
 - 行级 `LineItem.confidence`：M3 分类写。
 - 字段级 `Extraction.fieldConfidence`：M2 OCR 写。
 - **文档级 confidence = derived**：`worst(OCR 字段置信, 所有行分类置信)`，任一变更即重算。**不物化在 Document 上**（避免 M2/M3 各写各的漂移）。
+
+### 4.8 税码规则表（2026-08-02 追加，落实 G10）
+
+**输入三元组 →（省份, 科目类别, 供应商是否 GST/HST 登记）→ 输出 QBO `TaxCode.Id`**。规则表是 canonical，AI 不参与。
+
+- **税码表本身来自 QBO**：`SELECT * FROM TaxCode`，随客户/省份不同，与 `GlAccountCache` 同属"QBO 权威、本地 cache"（§4.5 同款语义），落 `TaxCodeCache`。
+- **餐饮招待 50%**：加拿大只有一半 GST/HST 可抵 ITC。QBO Canada 的落地方式是 **group rate**（一条 liability 半额走 ITC + 一条 expense 半额计入费用）。**由科目触发，不由 AI 判断**：科目类别 = 餐饮招待 → 强制使用该客户配置的 M&E group rate。
+- **PST / QST 不可抵扣**：只有 GST/HST 部分进 ITC，PST 计入费用成本。省份决定是否存在 PST。
+- **供应商未登记 GST/HST**：不得给可抵扣税码，税额并入费用。
+- **未命中**：`taxCode` 留空 + 该行强制人工，**禁止兜底猜一个**。
+
+### 4.9 CRA 抵扣凭证等级（derived，不物化）
+
+依 CRA《Input Tax Credit Information (GST/HST) Regulations》，凭证要件按金额分三档。**由 `Extraction` 已抽字段实时算**（G4「能算的绝不存」）：
+
+| 票面总额 | 必需字段 |
+|---|---|
+| < $30 | 供应商名、日期、总额 |
+| $30 – $150 | 上述 + **供应商 GST/HST 登记号** + 税额或含税声明 |
+| ≥ $150 | 上述 + **购方名称**、付款条款、每项供应的描述 |
+
+- 产出 `itcEligibility: ok | incomplete`（+ 缺失字段列表），驱动复核队列排序与「不可抵扣清单」。
+- 为此 `Extraction` 需新增抽取字段：`supplierTaxNumber`、`recipientName`、`paymentTerms`。
+- ⚠️ 这是**风险信号，不是拦截器**：凭证不达标照样可以入账（费用照记），只是这笔 **ITC 不能抵**，必须显式告知会计师。
+
+### 4.10 绿色通道（自动过账）的准入条件（2026-08-02 追加）
+
+全部满足才允许 `needs_review` 直接走到录入，**任一不满足即进人工复核**：
+
+1. 命中该客户的**供应商规则**，且该规则 `confirmedCount ≥ 3`（人工确认过至少 3 次）
+2. 所有行 `confidence = high`
+3. `itcEligibility = ok`（§4.9）
+4. `Extraction.total ≤ Client.autoPostThreshold`（默认 CAD 200）
+5. 非 `duplicate_suspected`
+6. 所有行 `taxCode` 由规则表命中（§4.8），非空
+
+自动过账**不新增状态**：仍走 `confirmed → syncing_qbo → synced`，但 `AuditLog.userId = "system"`、`action = "auto_confirm"`，并进「已自动过账」抽查列表。会计师可随时关闭该客户的绿色通道（`Client.autoPostEnabled`）。
+
+### 4.12 追票工单：只存「催过没有」，不存「解决了没有」（2026-08-02 追加）
+
+对账缺收据 → 向客户追票。按 G4「能算的绝不存」拆开两件事：
+
+- **canonical**：`ChaseNotice`（催票记录）—— 何时、通过什么渠道、催了谁、内容是什么。这是发生过的事实，只能记录。
+- **derived**：工单是否「已解决」= 该 `BankTxn` 现在是否已匹配到单据（§4.6 实时算）。**不存 resolved 状态**，否则补票后两处会不一致。
+- 「无需收据」不进工单体系，仍走 `BankTxn.matchStatus = "ignored"`（唯一 canonical），有 ignored 就不再催。
+
+| 表 | 字段 | 语义 |
+|---|---|---|
+| 新表 `ChaseNotice` | `firmId`、`clientId`、`bankTxnId`、`channel`、`recipient`、`subject`、`body`、`sentAt`、`sentBy` | 一笔流水可有多条（催了 N 次）；`sentAt` 为空表示只生成未发送 |
+
+### 4.11 因上述裁定新增的字段（schema 增量）
+
+| 表 | 字段 | 语义 |
+|---|---|---|
+| `Document` | `settlement String?` | `paid \| unpaid`，canonical（G9）。OCR 给初值，会计师可改；决定录 Expense 还是 Bill |
+| `Extraction` | `supplierTaxNumber String?`、`recipientName String?`、`paymentTerms String?` | CRA 凭证要件（§4.9） |
+| `ClassificationRule` | `confirmedCount Int @default(0)` | 人工确认次数，绿色通道条件 1 |
+| `Client` | `province String?`、`autoPostEnabled Boolean @default(false)`、`autoPostThreshold Decimal?`、`taxNumber String?`、`qboPaymentAccountId String?` | 税码规则输入 + 绿色通道配置 + 购方 GST 号 + 已付单据冲账的银行/信用卡账户（QBO Purchase 必填，缺则已付单据无法录入） |
+| `Document` | `qboEntity String?` | 实际录入的 QBO 对象类型（`Bill`\|`Purchase`），与 `qboBillId` 一起构成回查坐标（G5/G9） |
+| `TaxCodeCache` | `semanticKey String?` | 规则表输出（`TaxTreatment`）→ 该客户实际税码的桥；换省份只换这张表 |
+| 新表 `TaxCodeCache` | `clientId`、`qboTaxCodeId`、`name`、`rate`、`isGroup`、`syncedAt` | QBO 权威、本地 cache（同 `GlAccountCache`） |
 
 ---
 

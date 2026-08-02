@@ -38,6 +38,16 @@ function unwrap(v: unknown): unknown {
   }
   return v;
 }
+// 取第一个非空字符串（各字段在不同地区/文档类型下位置不同，逐个兜）。
+function firstString(...vals: unknown[]): string | null {
+  for (const v of vals) {
+    const u = unwrap(v);
+    if (typeof u === "string" && u.trim()) return u.trim();
+    if (typeof u === "number") return String(u);
+  }
+  return null;
+}
+
 function fieldScore(v: unknown): number | undefined {
   if (v && typeof v === "object" && "score" in (v as Record<string, unknown>)) {
     const s = (v as Record<string, unknown>).score;
@@ -122,8 +132,27 @@ export class VeryfiOcrProvider implements OcrProvider {
       suggestedCategory = { value: catRaw, score: 0 };
     }
 
+    // CRA 凭证要件（契约 §4.9）：Veryfi 把供应商税号放在 vendor.reg_number / vat_number（视地区），
+    // 购方在 bill_to.name。取不到就是 null —— 复核页据此提示"这笔 ITC 抵不了"。
+    const billTo = raw.bill_to as { name?: unknown } | undefined;
+    const vendorAny = raw.vendor as Record<string, unknown> | undefined;
+    const supplierTaxNumber = firstString(
+      vendorAny?.reg_number,
+      vendorAny?.vat_number,
+      raw.vat_number,
+      raw.reg_number,
+    );
+    const paymentTerms = firstString(raw.payment_terms, (raw.payment as Record<string, unknown> | undefined)?.terms);
+    const paymentType = firstString((raw.payment as Record<string, unknown> | undefined)?.type);
+    const isPaid = paymentType ? !/invoice|terms|net\s*\d+/i.test(paymentType) : null;
+
     return {
       vendorName,
+      supplierTaxNumber,
+      recipientName: billTo?.name != null ? String(unwrap(billTo.name)) : null,
+      paymentTerms,
+      // 有付款方式（信用卡/现金等）视为已付；有账期/发票条款视为未付；判不出留给复核人。
+      settlementHint: isPaid === null ? (isoDate(unwrap(raw.due_date)) ? "unpaid" : null) : isPaid ? "paid" : "unpaid",
       invoiceNo: unwrap(raw.invoice_number) != null ? String(unwrap(raw.invoice_number)) : null,
       txnDate: isoDate(unwrap(raw.date)),
       dueDate: isoDate(unwrap(raw.due_date)),

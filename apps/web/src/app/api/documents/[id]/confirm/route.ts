@@ -3,7 +3,7 @@ import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { assertTransition, type DocStatus } from "@/domain";
 
-type Assignment = { lineId: string; glAccountId: string | null };
+type Assignment = { lineId: string; glAccountId: string | null; taxCode?: string | null };
 
 // 确认复核：持久化每行 GL 科目 + 学习飞轮（回写供应商规则）+ 状态 → confirmed。
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -21,19 +21,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!doc) return Response.json({ error: "单据不存在" }, { status: 404 });
 
-  // 候选科目（校验分配是否合法）
-  const accts = await prisma.glAccountCache.findMany({ where: { clientId: doc.clientId } });
+  // 候选科目 / 税码（校验分配是否合法）
+  const [accts, taxes] = await Promise.all([
+    prisma.glAccountCache.findMany({ where: { clientId: doc.clientId } }),
+    prisma.taxCodeCache.findMany({ where: { clientId: doc.clientId } }),
+  ]);
   const acctById = new Map(accts.map((a) => [a.qboAccountId, a]));
+  const taxIds = new Set(taxes.map((t) => t.qboTaxCodeId));
 
-  const assignMap = new Map(assignments.map((a) => [String(a.lineId), a.glAccountId ? String(a.glAccountId) : null]));
-  const finalByLine = doc.lines.map((l) => ({
-    lineId: l.id,
-    glAccountId: assignMap.has(l.id) ? assignMap.get(l.id)! : l.glAccountId,
-  }));
+  const byLine = new Map(assignments.map((a) => [String(a.lineId), a]));
+  const finalByLine = doc.lines.map((l) => {
+    const a = byLine.get(l.id);
+    return {
+      lineId: l.id,
+      glAccountId: a ? (a.glAccountId ? String(a.glAccountId) : null) : l.glAccountId,
+      taxCode: a && "taxCode" in a ? (a.taxCode ? String(a.taxCode) : null) : l.taxCode,
+    };
+  });
 
-  const missing = finalByLine.filter((x) => !x.glAccountId || !acctById.has(x.glAccountId));
-  if (missing.length) {
-    return Response.json({ error: `还有 ${missing.length} 行未选择有效科目` }, { status: 400 });
+  const missingAcct = finalByLine.filter((x) => !x.glAccountId || !acctById.has(x.glAccountId));
+  if (missingAcct.length) {
+    return Response.json({ error: `还有 ${missingAcct.length} 行未选择有效科目` }, { status: 400 });
+  }
+  // QBO 要求每行有有效税码，缺税码不得录入（契约 §4.8）
+  const missingTax = finalByLine.filter((x) => !x.taxCode || !taxIds.has(x.taxCode));
+  if (missingTax.length) {
+    return Response.json({ error: `还有 ${missingTax.length} 行未选择有效税码` }, { status: 400 });
   }
 
   // 持久化行分类（人工确认 → high）
@@ -41,7 +54,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     finalByLine.map((x) =>
       prisma.lineItem.update({
         where: { id: x.lineId },
-        data: { glAccountId: x.glAccountId, glAccountName: acctById.get(x.glAccountId!)!.name, confidence: "high" },
+        data: {
+          glAccountId: x.glAccountId,
+          glAccountName: acctById.get(x.glAccountId!)!.name,
+          taxCode: x.taxCode,
+          confidence: "high",
+        },
       }),
     ),
   );
@@ -57,9 +75,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { firmId: s.firmId, clientId: doc.clientId, matchType: "vendor", matchValue: vendor },
     });
     if (existing) {
+      // confirmedCount 累加：同一供应商被人工确认得越多，规则越可信 —— 绿色通道条件 1（契约 §4.10）。
+      // 科目改了则清零重数：新科目还没被反复验证过。
+      const sameAccount = existing.glAccountId === acctId;
       await prisma.classificationRule.update({
         where: { id: existing.id },
-        data: { glAccountId: acctId, glAccountName: acct.name },
+        data: {
+          glAccountId: acctId,
+          glAccountName: acct.name,
+          confirmedCount: sameAccount ? { increment: 1 } : 1,
+        },
       });
     } else {
       await prisma.classificationRule.create({
@@ -70,6 +95,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           matchValue: vendor,
           glAccountId: acctId,
           glAccountName: acct.name,
+          confirmedCount: 1,
         },
       });
     }

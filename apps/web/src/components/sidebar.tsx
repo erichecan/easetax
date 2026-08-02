@@ -4,10 +4,19 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { Client } from "@/lib/types";
 
-export function Sidebar({ clients, firmName }: { clients: Client[]; firmName: string }) {
+export function Sidebar({
+  clients,
+  firmName,
+  activeClientId,
+}: {
+  clients: Client[];
+  firmName: string;
+  activeClientId?: string | null;
+}) {
   const path = usePathname();
   const router = useRouter();
-  const activeClient = path.match(/\/clients\/([^/]+)/)?.[1];
+  // 客户页从 URL 取；复核页 URL 里没有 clientId，由服务端反查后传进来。
+  const activeClient = path.match(/\/clients\/([^/]+)/)?.[1] ?? activeClientId ?? undefined;
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -46,27 +55,45 @@ export function Sidebar({ clients, firmName }: { clients: Client[]; firmName: st
           const active = activeClient === c.id;
           const pending = c.stats.inbox + c.stats.review;
           return (
-            <Link
-              key={c.id}
-              href={`/clients/${c.id}/documents`}
-              className={`group flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${
-                active ? "bg-ink-700/10 text-ink-900" : "text-muted hover:bg-paper hover:text-ink-900"
-              }`}
-            >
-              <span className="flex items-center gap-2 truncate">
-                <span
-                  className={`size-1.5 shrink-0 rounded-full ${
-                    c.qboConnected ? "bg-conf-high" : "bg-line-strong"
-                  }`}
-                />
-                <span className="truncate">{c.name}</span>
-              </span>
-              {pending > 0 && (
-                <span className="tnum shrink-0 rounded-full bg-gold-50 px-1.5 text-[11px] font-semibold text-gold-700">
-                  {pending}
+            <div key={c.id}>
+              <Link
+                href={`/clients/${c.id}`}
+                className={`group flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${
+                  active ? "bg-ink-700/10 text-ink-900" : "text-muted hover:bg-paper hover:text-ink-900"
+                }`}
+              >
+                <span className="flex items-center gap-2 truncate">
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${
+                      c.qboConnected ? "bg-conf-high" : "bg-line-strong"
+                    }`}
+                  />
+                  <span className="truncate">{c.name}</span>
                 </span>
+                {pending > 0 && (
+                  <span className="tnum shrink-0 rounded-full bg-gold-50 px-1.5 text-[11px] font-semibold text-gold-700">
+                    {pending}
+                  </span>
+                )}
+              </Link>
+
+              {/* 展开的客户按「主链 → 护栏 → 配置」排，与流程文档同序 */}
+              {active && (
+                <div className="mb-1 ml-[18px] space-y-px border-l border-line pl-3">
+                  <SubLink href={`/clients/${c.id}`} label="流程工作台" current={path === `/clients/${c.id}`} />
+                  <SubLink
+                    href={`/clients/${c.id}/reconciliation`}
+                    label="银行对账 · 追票"
+                    current={path.endsWith("/reconciliation")}
+                  />
+                  <SubLink
+                    href={`/clients/${c.id}/settings`}
+                    label="客户设置"
+                    current={path.endsWith("/settings")}
+                  />
+                </div>
               )}
-            </Link>
+            </div>
           );
         })}
         {clients.length === 0 && (
@@ -94,5 +121,18 @@ export function Sidebar({ clients, firmName }: { clients: Client[]; firmName: st
         </div>
       </div>
     </aside>
+  );
+}
+
+function SubLink({ href, label, current }: { href: string; label: string; current: boolean }) {
+  return (
+    <Link
+      href={href}
+      className={`block rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
+        current ? "font-medium text-ink-700" : "text-muted hover:text-ink-900"
+      }`}
+    >
+      {label}
+    </Link>
   );
 }
