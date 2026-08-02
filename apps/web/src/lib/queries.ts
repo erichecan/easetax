@@ -370,6 +370,8 @@ export async function getDocumentForReview(
   accounts: GlAccount[];
   taxCodes: TaxCodeRef[];
   ocrText: string | null;
+  nextDocId: string | null;
+  remainingCount: number;
 } | null> {
   const d = await prisma.document.findFirst({
     where: { id: documentId, firmId },
@@ -389,5 +391,13 @@ export async function getDocumentForReview(
     treatment: (t.semanticKey as TaxTreatment | null) ?? null,
   }));
   const ocrText = (d.extraction?.rawJson as { ocr_text?: string } | null)?.ocr_text ?? null;
-  return { doc: toDocumentRec(d as DbDoc), client, accounts, taxCodes, ocrText };
+
+  // 「确认并下一张」用：同客户下按复核队列顺序排在这张之后的第一张待复核单据。
+  // 顺序与工作台一致（凭证风险 > 置信度 > 金额），否则跳转顺序会和列表对不上。
+  const pending = (await getClientDocuments(firmId, d.clientId)).filter((x) => x.status === "needs_review");
+  const idx = pending.findIndex((x) => x.id === documentId);
+  const nextDocId = idx >= 0 ? (pending[idx + 1]?.id ?? null) : (pending[0]?.id ?? null);
+  const remainingCount = idx >= 0 ? pending.length - idx - 1 : pending.length;
+
+  return { doc: toDocumentRec(d as DbDoc), client, accounts, taxCodes, ocrText, nextDocId, remainingCount };
 }

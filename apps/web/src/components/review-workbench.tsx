@@ -26,12 +26,17 @@ export function ReviewWorkbench({
   accounts,
   taxCodes,
   ocrText,
+  nextDocId,
+  remainingCount,
 }: {
   doc: DocumentRec;
   client: Client;
   accounts: GlAccount[];
   taxCodes: TaxCodeRef[];
   ocrText?: string | null;
+  /** 队列里下一张待复核的单据，用于「确认并下一张」 */
+  nextDocId?: string | null;
+  remainingCount?: number;
 }) {
   const taxCodeName = (id: string | null) =>
     id ? (taxCodes.find((t) => t.id === id)?.name ?? id) : null;
@@ -292,7 +297,8 @@ export function ReviewWorkbench({
         setError(j.error ?? `确认失败 (${res.status})`);
         return;
       }
-      router.push(`/clients/${client.id}/documents`);
+      // 复核是连续动作：还有下一张就直接去下一张，没有才回工作台
+      router.push(nextDocId ? `/documents/${nextDocId}/review` : `/clients/${client.id}`);
       router.refresh();
     } catch {
       setError("网络错误");
@@ -372,8 +378,17 @@ export function ReviewWorkbench({
             disabled={!allAssigned || saving}
             className="rounded-lg bg-ink-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {saving ? "确认中…" : allAssigned ? "确认分类" : "尚有未分类行"}
+            {saving
+              ? "确认中…"
+              : !allAssigned
+                ? "尚有未分类行"
+                : nextDocId
+                  ? "确认并下一张 →"
+                  : "确认分类"}
           </button>
+          {typeof remainingCount === "number" && remainingCount > 0 && (
+            <span className="text-[11px] text-faint">还剩 {remainingCount} 张待复核</span>
+          )}
         </div>
       </header>
 

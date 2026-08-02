@@ -54,6 +54,44 @@ export function ClientWorkbench({
   const [notice, setNotice] = useState<string | null>(null);
   const [justUploadedId, setJustUploadedId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchResult, setBatchResult] = useState<{ confirmed: number; failed: { fileName: string; reason: string }[] } | null>(null);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // 批量确认只对「已经齐全」的生效，缺件的逐条报错 —— 批量不该替人做判断
+  async function batchConfirm() {
+    if (!selected.size || batchBusy) return;
+    setBatchBusy(true);
+    setNotice(null);
+    setBatchResult(null);
+    try {
+      const res = await fetch("/api/documents/batch-confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentIds: [...selected] }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNotice(`✗ ${j.error ?? "批量确认失败"}`);
+        return;
+      }
+      setBatchResult({ confirmed: j.confirmed, failed: j.failed ?? [] });
+      setSelected(new Set());
+      router.refresh();
+    } catch {
+      setNotice("✗ 网络错误");
+    } finally {
+      setBatchBusy(false);
+    }
+  }
 
   // 凭证缺件：只统计还能改的单据（已录入的改不了，提示没意义）
   const itcRisk = useMemo(
@@ -235,10 +273,50 @@ export function ClientWorkbench({
         )}
       </div>
 
+      {/* 批量确认：勾选后出现，不占常驻空间 */}
+      {selected.size > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-ink-700/20 bg-ink-700/5 px-4 py-2.5">
+          <span className="text-sm font-medium text-ink-900">已选 {selected.size} 张</span>
+          <button
+            onClick={batchConfirm}
+            disabled={batchBusy}
+            className="rounded-lg bg-ink-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+          >
+            {batchBusy ? "确认中…" : "批量确认"}
+          </button>
+          <button onClick={() => setSelected(new Set())} className="text-xs text-muted hover:text-ink-900">
+            取消选择
+          </button>
+          <span className="text-[11px] text-faint">只确认科目与税码齐全的，缺件的会逐条报出原因</span>
+        </div>
+      )}
+
+      {batchResult && (
+        <div className="mt-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm">
+          <span className="font-medium text-conf-high">已确认 {batchResult.confirmed} 张</span>
+          {batchResult.failed.length > 0 && (
+            <>
+              <span className="ml-2 text-conf-med">{batchResult.failed.length} 张未能确认：</span>
+              <ul className="mt-1 space-y-0.5 text-[11px] text-muted">
+                {batchResult.failed.map((f, i) => (
+                  <li key={i}>
+                    {f.fileName} —— {f.reason}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <button onClick={() => setBatchResult(null)} className="mt-1.5 block text-xs text-muted hover:text-ink-900">
+            知道了
+          </button>
+        </div>
+      )}
+
       <div className="mt-3 overflow-hidden rounded-xl border border-line bg-surface">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-line text-left text-[11px] uppercase tracking-wider text-faint">
+              <th className="w-9 px-4 py-3" />
               <th className="px-4 py-3 font-semibold">单据</th>
               <th className="px-4 py-3 font-semibold">供应商</th>
               <th className="px-4 py-3 text-right font-semibold">金额</th>
@@ -259,6 +337,18 @@ export function ClientWorkbench({
                     isNew ? "rise bg-gold-50/40" : ""
                   }`}
                 >
+                  <td className="px-4 py-3">
+                    {/* 只有待复核的能批量确认，其余不给勾选框免得误导 */}
+                    {d.status === "needs_review" && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(d.id)}
+                        onChange={() => toggle(d.id)}
+                        aria-label={`选择 ${d.fileName}`}
+                        className="size-4 accent-ink-700"
+                      />
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       <span
@@ -332,7 +422,7 @@ export function ClientWorkbench({
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-sm text-faint">
+                <td colSpan={7} className="px-4 py-12 text-center text-sm text-faint">
                   {filter ? "这一步没有单据 —— 说明这里不堵" : "还没有单据，上传一张试试"}
                 </td>
               </tr>

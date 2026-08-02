@@ -16,6 +16,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ id: str
       accounts={data.accounts}
       taxCodes={data.taxCodes}
       ocrText={data.ocrText}
+      nextDocId={data.nextDocId}
+      remainingCount={data.remainingCount}
     />
   );
 }
