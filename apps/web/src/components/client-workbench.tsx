@@ -34,7 +34,7 @@ const money = (n: number) => n.toLocaleString("en-CA", { style: "currency", curr
 // 上传时的进度提示用流程语言，和管道上的段名一致。
 const INTAKE_STEPS = ["① 收单 · 存原件、按指纹去重", "② 识别 · OCR 抽字段与行项目", "③ 定科目税码 · 规则与 AI"];
 
-type Filter = Stage | "exception" | "done" | null;
+type Filter = Stage | "exception" | "done" | "auto" | null;
 
 export function ClientWorkbench({
   client,
@@ -130,6 +130,8 @@ export function ClientWorkbench({
     if (!filter) return docs;
     if (filter === "exception") return docs.filter((d) => isException(d.status));
     if (filter === "done") return docs.filter((d) => isDone(d.status));
+    // 绿色通道抽查：机器替人做过判断的单据必须能被单独调出来复查（契约 §4.10）
+    if (filter === "auto") return docs.filter((d) => d.autoPosted);
     return docs.filter((d) => stageOf(d.status) === filter);
   }, [docs, filter]);
 
@@ -180,12 +182,16 @@ export function ClientWorkbench({
       ? "bg-conf-med-bg text-conf-med"
       : "bg-conf-low-bg text-conf-low";
 
+  const autoPosted = useMemo(() => docs.filter((d) => d.autoPosted), [docs]);
+
   const filterLabel =
     filter === "exception"
       ? "异常待处理"
       : filter === "done"
         ? "已录入 QBO"
-        : filter
+        : filter === "auto"
+          ? "自动过账（抽查）"
+          : filter
           ? `第 ${STAGE_META[filter].index} 步 · ${STAGE_META[filter].label}`
           : null;
 
@@ -242,7 +248,7 @@ export function ClientWorkbench({
 
       {/* 五段流程轨道：整个界面的骨架，点任一段即筛选到该段 */}
       <div className="mt-6">
-        <PipelineRail summary={pipeline} active={filter} onSelect={setFilter} />
+        <PipelineRail summary={pipeline} active={filter} onSelect={setFilter} autoPostedCount={autoPosted.length} />
       </div>
 
       {busy && (
@@ -287,6 +293,17 @@ export function ClientWorkbench({
           href={`/clients/${client.id}/itc-report`}
         />
       </div>
+
+      {filter === "auto" && (
+        <div className="mt-4 rounded-lg border border-ink-700/20 bg-ink-700/5 px-4 py-2.5 text-xs text-muted">
+          这些单据符合绿色通道六条准入，<strong className="text-ink-900">未经人工复核</strong>就确认并录入了。
+          放行依据（规则确认次数、置信度、凭证等级、金额阈值）见每张单据的审计记录；
+          抽查发现有问题的，在复核页可直接退回。
+          <Link href={`/clients/${client.id}/audit`} className="ml-1 font-medium text-ink-700 underline">
+            查看审计日志
+          </Link>
+        </div>
+      )}
 
       <div className="mt-7 flex items-baseline justify-between">
         <h2 className="font-display text-lg font-bold text-ink-900">
