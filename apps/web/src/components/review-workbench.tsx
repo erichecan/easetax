@@ -185,6 +185,39 @@ export function ReviewWorkbench({
   }
 
   const canReprocess = doc.status === "needs_review" || doc.status === "ocr_failed";
+  // 契约 §4.1 允许退回的来源状态
+  const canReject = ["received", "needs_review", "duplicate_suspected", "ocr_failed"].includes(doc.status);
+  const [rejecting, setRejecting] = useState(false);
+
+  async function reject() {
+    if (!canReject || rejecting) return;
+    const reason = window.prompt("退回原因（会记入审计，事后要答得上）：\n例如：重复件 / 私人消费 / 不是发票");
+    if (reason === null) return;
+    if (!reason.trim()) {
+      setError("退回必须填写原因");
+      return;
+    }
+    setRejecting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/documents/${doc.id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(j.error ?? "退回失败");
+        return;
+      }
+      router.push(`/clients/${client.id}`);
+      router.refresh();
+    } catch {
+      setError("网络错误");
+    } finally {
+      setRejecting(false);
+    }
+  }
 
   async function reprocess() {
     if (!canReprocess || reprocessing) return;
@@ -316,6 +349,16 @@ export function ReviewWorkbench({
         </div>
         <div className="flex items-center gap-2">
           {error && <span className="text-xs text-conf-low">{error}</span>}
+          {canReject && (
+            <button
+              onClick={reject}
+              disabled={rejecting}
+              title="不该入账的单据（重复件 / 私人消费 / 不是发票）"
+              className="rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-muted transition-colors hover:border-conf-low/40 hover:text-conf-low disabled:opacity-40"
+            >
+              {rejecting ? "退回中…" : "退回"}
+            </button>
+          )}
           <button
             onClick={reprocess}
             disabled={!canReprocess || reprocessing}
