@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { getClientsForFirm } from "@/lib/queries";
+import { NewClientDialog } from "@/components/new-client-dialog";
 
 export default async function ClientsPage() {
   const session = await requireSession();
@@ -17,9 +18,7 @@ export default async function ClientsPage() {
             共 {clients.length} 家客户 · 待复核 {totalReview} 张 · 新到 {totalInbox} 张
           </p>
         </div>
-        <button className="rounded-lg bg-ink-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-ink-800">
-          + 新增客户
-        </button>
+        <NewClientDialog />
       </header>
 
       <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
