@@ -3,15 +3,18 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PROVINCES, PROVINCE_NAMES, AUTO_POST_GATE_LABELS, DEFAULT_AUTO_POST_THRESHOLD } from "@/domain";
-import type { Client, GlAccount } from "@/lib/types";
+import type { Client, GlAccount, TaxCodeRef } from "@/lib/types";
+import { TaxCodeMapper } from "./tax-code-mapper";
 
 export function ClientSettings({
   client,
   accounts,
+  taxCodes,
   qboJustConnected,
 }: {
   client: Client;
   accounts: GlAccount[];
+  taxCodes: TaxCodeRef[];
   qboJustConnected?: boolean;
 }) {
   const router = useRouter();
@@ -169,6 +172,8 @@ export function ClientSettings({
           </label>
         </div>
       </section>
+
+      <TaxCodeMapper clientId={client.id} taxCodes={taxCodes} />
 
       <section className="mt-4 rounded-xl border border-line bg-surface p-6">
         <h2 className="font-medium text-ink-900">已付单据的付款账户</h2>

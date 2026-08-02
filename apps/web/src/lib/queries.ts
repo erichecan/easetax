@@ -263,6 +263,15 @@ export async function getClientIdOfDocument(firmId: string, documentId: string):
   return d?.clientId ?? null;
 }
 
+export async function getClientTaxCodes(clientId: string): Promise<TaxCodeRef[]> {
+  const rows = await prisma.taxCodeCache.findMany({ where: { clientId }, orderBy: { name: "asc" } });
+  return rows.map((t) => ({
+    id: t.qboTaxCodeId,
+    name: t.name,
+    treatment: (t.semanticKey as TaxTreatment | null) ?? null,
+  }));
+}
+
 export async function getClientAccounts(clientId: string): Promise<GlAccount[]> {
   const accts = await prisma.glAccountCache.findMany({ where: { clientId }, orderBy: { name: "asc" } });
   return accts.map((a) => ({ id: a.qboAccountId, code: a.qboAccountId, name: a.name }));
