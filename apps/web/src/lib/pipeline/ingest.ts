@@ -11,6 +11,7 @@ import {
   type DocStatus,
 } from "@/domain";
 import { fileHash, validateUpload } from "@/lib/intake/file-validation";
+import { withRetry } from "@/lib/retry";
 import {
   classifyLine,
   getClassifier,
@@ -22,6 +23,8 @@ import {
 } from "@/lib/providers";
 
 const SYSTEM_USER = "system";
+// DEV-PLAN P2：OCR 失败重试 3 次 + 退避
+const OCR_MAX_ATTEMPTS = 3;
 
 async function audit(
   firmId: string,
@@ -124,17 +127,38 @@ export async function processDocument(documentId: string, userId = SYSTEM_USER):
   await transitionTo(doc, "ocr_processing", userId);
 
   let ocr;
+  let ocrAttempts = 1;
+  const retryLog: { attempt: number; delayMs: number; error: string }[] = [];
   try {
     const bytes = await getStorageProvider().get(record.storageKey);
-    ocr = await getOcrProvider().extract({
-      bytes,
-      fileName: record.fileName,
-      mimeType: record.mimeType,
-      categories: accounts.map((a) => a.name),
-    });
+    // 网络抖动或 OCR 服务 5xx 不该让单据直接报废（DEV-PLAN §6：重试+退避）。
+    // 4xx（凭据失效、试用到期、文件类型不支持）不重试 —— 试几次都一样。
+    const r = await withRetry(
+      () =>
+        getOcrProvider().extract({
+          bytes,
+          fileName: record.fileName,
+          mimeType: record.mimeType,
+          categories: accounts.map((a) => a.name),
+        }),
+      {
+        attempts: OCR_MAX_ATTEMPTS,
+        onRetry: ({ attempt, delayMs, error }) =>
+          retryLog.push({ attempt, delayMs, error: error instanceof Error ? error.message : String(error) }),
+      },
+    );
+    ocr = r.value;
+    ocrAttempts = r.attempts;
   } catch (e) {
-    await transitionTo(doc, "ocr_failed", userId, { error: e instanceof Error ? e.message : String(e) });
+    await transitionTo(doc, "ocr_failed", userId, {
+      error: e instanceof Error ? e.message : String(e),
+      attempts: retryLog.length + 1,
+      retries: retryLog,
+    });
     return { status: "ocr_failed", lines: 0 };
+  }
+  if (ocrAttempts > 1) {
+    await audit(doc.firmId, userId, doc.id, "ocr:recovered_after_retry", { attempts: ocrAttempts, retries: retryLog });
   }
 
   // 重跑时替换上一次识别结果：**先 OCR 成功再删**，OCR 失败则旧结果原样保留。
