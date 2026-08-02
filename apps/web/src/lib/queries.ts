@@ -265,6 +265,58 @@ export async function getClientIdOfDocument(firmId: string, documentId: string):
   return d?.clientId ?? null;
 }
 
+export type ItcReportRow = {
+  id: string;
+  fileName: string;
+  vendor: string;
+  txnDate: string;
+  total: number;
+  taxAmount: number;
+  status: DocStatus;
+  missing: string[];
+  tier: string | null;
+};
+
+// 月末「不可抵扣清单」（业务流程设计 §2.2 护栏 B）。
+// 关键口径：只算**税额**不可抵的部分，不是整张票的金额 —— 费用照记，抵不了的是 ITC。
+export async function getItcReport(
+  firmId: string,
+  clientId: string,
+  range?: { from?: string; to?: string },
+): Promise<{ rows: ItcReportRow[]; unrecoverableTax: number; period: string }> {
+  const docs = await getClientDocuments(firmId, clientId);
+
+  const from = range?.from ? new Date(range.from) : null;
+  const to = range?.to ? new Date(`${range.to}T23:59:59`) : null;
+
+  const rows = docs
+    .filter((d) => d.itc.status === "incomplete")
+    .filter((d) => {
+      if (!d.txnDate) return !from && !to; // 无日期的只在不筛期间时出现
+      const t = new Date(d.txnDate);
+      if (from && t < from) return false;
+      if (to && t > to) return false;
+      return true;
+    })
+    .map((d) => ({
+      id: d.id,
+      fileName: d.fileName,
+      vendor: d.vendor,
+      txnDate: d.txnDate,
+      total: d.total,
+      taxAmount: d.tax,
+      status: d.status,
+      missing: d.itc.missing,
+      tier: d.itc.tier,
+    }));
+
+  return {
+    rows,
+    unrecoverableTax: rows.reduce((s, r) => s + r.taxAmount, 0),
+    period: from || to ? `${range?.from ?? "最早"} ~ ${range?.to ?? "至今"}` : "全部期间",
+  };
+}
+
 export type AuditEntry = {
   id: string;
   createdAt: string;

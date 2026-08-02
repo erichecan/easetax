@@ -256,8 +256,8 @@ export function ClientWorkbench({
               ? "按 CRA 规定，这些票的进项税抵不了，需要向客户要完整发票"
               : "现有单据都满足 CRA 抵扣凭证要件"
           }
-          actionLabel={itcRisk.length > 0 ? "先复核这些" : "查看待复核"}
-          onClick={() => setFilter("review")}
+          actionLabel={itcRisk.length > 0 ? "看不可抵扣清单" : "查看清单"}
+          href={`/clients/${client.id}/itc-report`}
         />
       </div>
 
