@@ -87,6 +87,11 @@ export function Sidebar({
                     current={path.endsWith("/reconciliation")}
                   />
                   <SubLink
+                    href={`/clients/${c.id}/audit`}
+                    label="审计日志"
+                    current={path.endsWith("/audit")}
+                  />
+                  <SubLink
                     href={`/clients/${c.id}/settings`}
                     label="客户设置"
                     current={path.endsWith("/settings")}

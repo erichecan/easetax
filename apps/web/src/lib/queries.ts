@@ -1,5 +1,6 @@
 // firm-scoped 读取 + DB→视图类型映射。所有查询强制带 firmId（契约 G8）。
 // stats / 文档级 confidence 一律派生（契约 G4/§4.7），不物化。
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
   checkItc,
@@ -262,6 +263,61 @@ export async function getClientIdOfDocument(firmId: string, documentId: string):
     select: { clientId: true },
   });
   return d?.clientId ?? null;
+}
+
+export type AuditEntry = {
+  id: string;
+  createdAt: string;
+  userId: string;
+  action: string;
+  documentId: string | null;
+  fileName: string | null;
+  detail: unknown;
+};
+
+// 该客户的审计流。AuditLog 上没有 clientId（契约 §3 的表结构），所以两路取：
+// 单据级靠 documentId ∈ 该客户的单据；客户级靠 detail.clientId。
+export async function getClientAudit(
+  firmId: string,
+  clientId: string,
+  opts: { documentId?: string; limit?: number; offset?: number } = {},
+): Promise<{ entries: AuditEntry[]; total: number }> {
+  const limit = Math.min(opts.limit ?? 100, 300);
+  const offset = opts.offset ?? 0;
+
+  const docs = await prisma.document.findMany({
+    where: { firmId, clientId },
+    select: { id: true, fileName: true },
+  });
+  const nameById = new Map(docs.map((d) => [d.id, d.fileName]));
+
+  const where: Prisma.AuditLogWhereInput = opts.documentId
+    ? { firmId, documentId: opts.documentId }
+    : {
+        firmId,
+        OR: [
+          { documentId: { in: docs.map((d) => d.id) } },
+          { detail: { path: ["clientId"], equals: clientId } },
+        ],
+      };
+
+  const [rows, total] = await Promise.all([
+    prisma.auditLog.findMany({ where, orderBy: { createdAt: "desc" }, take: limit, skip: offset }),
+    prisma.auditLog.count({ where }),
+  ]);
+
+  return {
+    entries: rows.map((r) => ({
+      id: r.id,
+      createdAt: r.createdAt.toISOString(),
+      userId: r.userId,
+      action: r.action,
+      documentId: r.documentId,
+      fileName: r.documentId ? (nameById.get(r.documentId) ?? null) : null,
+      detail: r.detail,
+    })),
+    total,
+  };
 }
 
 export async function getClientTaxCodes(clientId: string): Promise<TaxCodeRef[]> {
