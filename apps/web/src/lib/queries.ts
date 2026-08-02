@@ -265,6 +265,34 @@ export async function getClientIdOfDocument(firmId: string, documentId: string):
   return d?.clientId ?? null;
 }
 
+export type RuleRow = {
+  id: string;
+  matchType: string;
+  matchValue: string;
+  glAccountId: string;
+  glAccountName: string;
+  confirmedCount: number;
+  createdAt: string;
+};
+
+// 分类规则列表。规则优先级最高（业务流程设计 §2.3），学错一条会持续污染后续单据，
+// 所以要能看见、能改。confirmedCount 一并给出——它是绿色通道的信任依据（§4.10）。
+export async function getClientRules(firmId: string, clientId: string): Promise<RuleRow[]> {
+  const rows = await prisma.classificationRule.findMany({
+    where: { firmId, OR: [{ clientId }, { clientId: null }] },
+    orderBy: [{ confirmedCount: "desc" }, { createdAt: "desc" }],
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    matchType: r.matchType,
+    matchValue: r.matchValue,
+    glAccountId: r.glAccountId,
+    glAccountName: r.glAccountName,
+    confirmedCount: r.confirmedCount,
+    createdAt: r.createdAt.toISOString().slice(0, 10),
+  }));
+}
+
 export type ItcReportRow = {
   id: string;
   fileName: string;

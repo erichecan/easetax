@@ -2,6 +2,7 @@
 // 并保留「演示 UI 专用」的视图类型（真实 DB 版本用 Prisma 生成类型）。
 export type { Confidence, DocStatus, DocSource, ItcCheck, ItcStatus, Settlement, TaxTreatment } from "@/domain";
 export type { MatchKind } from "@/lib/reconcile";
+export type { RuleRow, AuditEntry, ItcReportRow } from "@/lib/queries";
 import type { Confidence, DocStatus, ItcCheck, Settlement, TaxTreatment } from "@/domain";
 import type { MatchKind } from "@/lib/reconcile";
 
