@@ -1,6 +1,7 @@
 // 真实 QBO 实现。API 形状依据 docs/20260707-qbo-api-录入链验证.md（已做过技术验证）。
 // ⚠️ 未经真实 sandbox 实测（缺 Intuit 凭据）：minorversion 号与加拿大税字段组合仍需实测确认。
 // 加拿大公司：行级 TaxCodeRef + GlobalTaxCalculation 表达税，税额交给 QBO 算（契约 G6）。
+import { withRetry } from "@/lib/retry";
 import type {
   QboAccessContext,
   QboAccount,
@@ -13,6 +14,7 @@ import type {
 } from "./qbo";
 import type { QboEntity } from "@/domain";
 
+const QBO_MAX_ATTEMPTS = 3;
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 const MINOR_VERSION = process.env.QBO_MINOR_VERSION ?? "75";
 
@@ -50,16 +52,35 @@ export class IntuitQboProvider implements QboProvider {
 
   private async call<T>(ctx: QboAccessContext, path: string, init?: RequestInit): Promise<T> {
     const sep = path.includes("?") ? "&" : "?";
-    const res = await fetch(`${this.base}/v3/company/${ctx.realmId}${path}${sep}minorversion=${MINOR_VERSION}`, {
-      ...init,
-      headers: { ...this.headers(ctx), ...(init?.headers as Record<string, string> | undefined) },
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      // 429 携带 Retry-After，调用方按需退避（DEV-PLAN §6 性能）
-      throw new Error(`QBO ${res.status}${res.headers.get("Retry-After") ? ` retry-after=${res.headers.get("Retry-After")}` : ""}: ${text.slice(0, 300)}`);
-    }
-    return (await res.json()) as T;
+    const url = `${this.base}/v3/company/${ctx.realmId}${path}${sep}minorversion=${MINOR_VERSION}`;
+
+    // QBO 限流约 500/min/公司（DEV-PLAN §6）。429 必须**真的退避重试**，
+    // 而且要尊重 Retry-After —— 自己拍一个间隔可能比对方要求的还短，等于继续打。
+    const { value } = await withRetry(
+      async () => {
+        const res = await fetch(url, {
+          ...init,
+          headers: { ...this.headers(ctx), ...(init?.headers as Record<string, string> | undefined) },
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          const retryAfter = res.headers.get("Retry-After");
+          const err = new Error(`QBO ${res.status}: ${text.slice(0, 300)}`) as Error & {
+            status?: number;
+            retryAfterMs?: number;
+          };
+          err.status = res.status;
+          if (retryAfter) {
+            const secs = Number(retryAfter);
+            if (Number.isFinite(secs)) err.retryAfterMs = secs * 1000;
+          }
+          throw err;
+        }
+        return (await res.json()) as T;
+      },
+      { attempts: QBO_MAX_ATTEMPTS, respectRetryAfter: true },
+    );
+    return value;
   }
 
   private async query<T>(ctx: QboAccessContext, sql: string, entity: string): Promise<T[]> {

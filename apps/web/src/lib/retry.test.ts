@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backoffDelay, isRetryable, withRetry } from "./retry";
+import { backoffDelay, isRetryable, retryAfterMsOf, withRetry } from "./retry";
 
 const noSleep = async () => {};
 
@@ -103,4 +103,48 @@ test("onRetry 回调报告每次重试的轮次与延迟", async () => {
     }),
   );
   assert.deepEqual(seen, [1, 2]); // 第 3 次失败后直接抛，不再回调
+});
+
+test("respectRetryAfter：服务端说等多久就等多久，不用自己算的退避", async () => {
+  const waits: number[] = [];
+  let calls = 0;
+  await withRetry(
+    async () => {
+      calls++;
+      if (calls === 1) {
+        const e = new Error("QBO 429: rate limited") as Error & { status: number; retryAfterMs: number };
+        e.status = 429;
+        e.retryAfterMs = 30_000; // 服务端要求等 30s，远大于本地退避
+        throw e;
+      }
+      return "ok";
+    },
+    { attempts: 3, respectRetryAfter: true, sleep: async (ms) => void waits.push(ms) },
+  );
+  assert.deepEqual(waits, [30_000]);
+});
+
+test("不开 respectRetryAfter 时仍用本地退避", async () => {
+  const waits: number[] = [];
+  let calls = 0;
+  await withRetry(
+    async () => {
+      calls++;
+      if (calls === 1) {
+        const e = new Error("QBO 429") as Error & { retryAfterMs: number };
+        e.retryAfterMs = 30_000;
+        throw e;
+      }
+      return "ok";
+    },
+    { attempts: 3, sleep: async (ms) => void waits.push(ms) },
+  );
+  assert.ok(waits[0] < 5_000, `应使用本地退避而非 30s，实际 ${waits[0]}`);
+});
+
+test("retryAfterMsOf：只接受正数", () => {
+  assert.equal(retryAfterMsOf({ retryAfterMs: 5000 }), 5000);
+  assert.equal(retryAfterMsOf({ retryAfterMs: 0 }), null);
+  assert.equal(retryAfterMsOf({ retryAfterMs: "abc" }), null);
+  assert.equal(retryAfterMsOf(new Error("x")), null);
 });

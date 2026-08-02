@@ -35,6 +35,15 @@ export function qboEntityFor(settlement: Settlement): QboEntity {
   return settlement === "paid" ? "Purchase" : "Bill";
 }
 
+// 录入后要能一键回到 QBO 里那张单据核对。QBO 的深链形如
+// https://app.qbo.intuit.com/app/bill?txnId=123 （sandbox 走 sandbox. 前缀）
+export function qboDeepLink(entity: string | null, qboId: string | null, sandbox = false): string | null {
+  if (!qboId || !entity) return null;
+  const path = entity === "Purchase" ? "expense" : "bill";
+  const host = sandbox ? "https://sandbox.qbo.intuit.com" : "https://app.qbo.intuit.com";
+  return `${host}/app/${path}?txnId=${encodeURIComponent(qboId)}`;
+}
+
 // 省份/地区：税码规则表的输入之一（契约 §4.8）。
 export const PROVINCES = ["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"] as const;
 export type Province = (typeof PROVINCES)[number];

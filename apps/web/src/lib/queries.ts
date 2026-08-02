@@ -49,6 +49,8 @@ type DbDoc = {
   mimeType: string;
   status: string;
   settlement: string | null;
+  qboBillId: string | null;
+  qboEntity: string | null;
   createdAt: Date;
   extraction: {
     vendorName: string | null;
@@ -112,6 +114,8 @@ function toDocumentRec(d: DbDoc): DocumentRec {
     recipientName: e?.recipientName ?? null,
     paymentTerms: e?.paymentTerms ?? null,
     settlement: (d.settlement as Settlement | null) ?? null,
+    qboBillId: d.qboBillId,
+    qboEntity: d.qboEntity,
     id: d.id,
     clientId: d.clientId,
     source: d.source === "email" ? "email" : "upload",

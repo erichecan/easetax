@@ -9,7 +9,18 @@ export type RetryOptions = {
   /** 注入用：默认真实 sleep，测试里换成立即返回 */
   sleep?: (ms: number) => Promise<void>;
   onRetry?: (info: { attempt: number; delayMs: number; error: unknown }) => void;
+  /** 错误上带 retryAfterMs 时优先用它——服务端说等多久就等多久，自己拍的间隔可能更短 */
+  respectRetryAfter?: boolean;
 };
+
+// 服务端明确要求的等待时间（QBO/Intuit 的 429 会带 Retry-After）
+export function retryAfterMsOf(err: unknown): number | null {
+  if (err && typeof err === "object" && "retryAfterMs" in err) {
+    const v = Number((err as { retryAfterMs: unknown }).retryAfterMs);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return null;
+}
 
 export type RetryOutcome<T> = {
   value: T;
@@ -62,7 +73,8 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
       lastErr = err;
       // 不可重试的错误立刻抛，不浪费时间与外部额度
       if (!isRetryable(err) || attempt === attempts) throw err;
-      const delayMs = backoffDelay(attempt, base, max);
+      const serverAsked = opts.respectRetryAfter ? retryAfterMsOf(err) : null;
+      const delayMs = serverAsked ?? backoffDelay(attempt, base, max);
       opts.onRetry?.({ attempt, delayMs, error: err });
       await sleep(delayMs);
     }

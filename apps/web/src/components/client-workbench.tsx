@@ -56,7 +56,7 @@ export function ClientWorkbench({
   const inputRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
-  const [batchResult, setBatchResult] = useState<{ confirmed: number; failed: { fileName: string; reason: string }[] } | null>(null);
+  const [batchResult, setBatchResult] = useState<{ confirmed: number; failed: { fileName: string; reason: string }[]; verb?: string } | null>(null);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -65,6 +65,33 @@ export function ClientWorkbench({
       else next.add(id);
       return next;
     });
+
+  // 批量录入：串行请求，QBO 限流约 500/min，并发只会更快撞 429
+  async function batchSync() {
+    if (!selected.size || batchBusy) return;
+    setBatchBusy(true);
+    setNotice(null);
+    setBatchResult(null);
+    try {
+      const res = await fetch("/api/documents/batch-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentIds: [...selected] }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNotice(`✗ ${j.error ?? "批量录入失败"}`);
+        return;
+      }
+      setBatchResult({ confirmed: j.synced, failed: j.failed ?? [], verb: "录入" });
+      setSelected(new Set());
+      router.refresh();
+    } catch {
+      setNotice("✗ 网络错误");
+    } finally {
+      setBatchBusy(false);
+    }
+  }
 
   // 批量确认只对「已经齐全」的生效，缺件的逐条报错 —— 批量不该替人做判断
   async function batchConfirm() {
@@ -83,7 +110,7 @@ export function ClientWorkbench({
         setNotice(`✗ ${j.error ?? "批量确认失败"}`);
         return;
       }
-      setBatchResult({ confirmed: j.confirmed, failed: j.failed ?? [] });
+      setBatchResult({ confirmed: j.confirmed, failed: j.failed ?? [], verb: "确认" });
       setSelected(new Set());
       router.refresh();
     } catch {
@@ -284,6 +311,13 @@ export function ClientWorkbench({
           >
             {batchBusy ? "确认中…" : "批量确认"}
           </button>
+          <button
+            onClick={batchSync}
+            disabled={batchBusy}
+            className="rounded-lg border border-ink-700 px-3 py-1.5 text-xs font-semibold text-ink-700 hover:bg-ink-700/10 disabled:opacity-40"
+          >
+            {batchBusy ? "录入中…" : "批量录入 QBO"}
+          </button>
           <button onClick={() => setSelected(new Set())} className="text-xs text-muted hover:text-ink-900">
             取消选择
           </button>
@@ -293,10 +327,10 @@ export function ClientWorkbench({
 
       {batchResult && (
         <div className="mt-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-sm">
-          <span className="font-medium text-conf-high">已确认 {batchResult.confirmed} 张</span>
+          <span className="font-medium text-conf-high">已{batchResult.verb ?? "确认"} {batchResult.confirmed} 张</span>
           {batchResult.failed.length > 0 && (
             <>
-              <span className="ml-2 text-conf-med">{batchResult.failed.length} 张未能确认：</span>
+              <span className="ml-2 text-conf-med">{batchResult.failed.length} 张未能{batchResult.verb ?? "确认"}：</span>
               <ul className="mt-1 space-y-0.5 text-[11px] text-muted">
                 {batchResult.failed.map((f, i) => (
                   <li key={i}>
@@ -339,7 +373,7 @@ export function ClientWorkbench({
                 >
                   <td className="px-4 py-3">
                     {/* 只有待复核的能批量确认，其余不给勾选框免得误导 */}
-                    {d.status === "needs_review" && (
+                    {(d.status === "needs_review" || d.status === "confirmed" || d.status === "sync_failed") && (
                       <input
                         type="checkbox"
                         checked={selected.has(d.id)}

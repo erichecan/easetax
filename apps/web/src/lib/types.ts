@@ -104,6 +104,8 @@ export type DocumentRec = {
   itc: ItcCheck; // CRA 抵扣凭证等级，derived（契约 §4.9）
   settlement: Settlement | null; // 已付/未付，决定录 Expense 还是 Bill（契约 G9）
   autoPosted?: boolean; // 由绿色通道自动确认（契约 §4.10），供抽查
+  qboBillId: string | null;
+  qboEntity: string | null;
   receivedAt: string;
   lines: LineItem[];
   note?: string;

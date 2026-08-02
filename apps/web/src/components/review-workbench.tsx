@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Client, DocumentRec, GlAccount, LineItem, Confidence, TaxCodeRef, Settlement } from "@/lib/types";
-import { STAGES, STAGE_META, stageOf } from "@/domain";
+import { STAGES, STAGE_META, stageOf, qboDeepLink } from "@/domain";
 import { ItcBadge, itcMissingText } from "./itc-badge";
 import { DocHeaderEditor } from "./doc-header-editor";
 import { STAGE_TONE } from "./pipeline-rail";
@@ -141,6 +141,8 @@ export function ReviewWorkbench({
   const qboEntity = settlement === "paid" ? "Purchase 支出" : "Bill 应付账单";
   const canSync = doc.status === "confirmed" || doc.status === "sync_failed";
   const currentStage = stageOf(doc.status);
+  // 录入后要能回 QBO 核对，光给个 id 等于让人自己去搜
+  const qboLink = qboDeepLink(doc.qboEntity, doc.qboBillId, process.env.NEXT_PUBLIC_QBO_SANDBOX === "1");
 
   async function changeSettlement(next: Settlement) {
     if (next === settlement || doc.status === "synced") return;
@@ -786,6 +788,16 @@ export function ReviewWorkbench({
           {doc.status === "synced" && (
             <div className="mt-3 rounded-lg bg-conf-high-bg px-3 py-2 text-xs text-conf-high">
               ✓ 已录入 QBO，本地转为只读快照 —— 之后的修改请到 QBO 里做。
+              {qboLink && (
+                <a
+                  href={qboLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 block font-semibold underline"
+                >
+                  在 QBO 中打开这张 {doc.qboEntity} #{doc.qboBillId} →
+                </a>
+              )}
             </div>
           )}
           {syncNote && (
