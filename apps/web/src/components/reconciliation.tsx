@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Client, ReconRow } from "@/lib/types";
@@ -20,6 +20,39 @@ export function Reconciliation({
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<{
+    parsed: number;
+    imported: number;
+    duplicates: number;
+    detected: { date: string; description: string; amount: string };
+    errors: { line: number; reason: string }[];
+    errorCount: number;
+  } | null>(null);
+  const csvRef = useRef<HTMLInputElement>(null);
+
+  async function importCsv(file: File) {
+    if (busy) return;
+    setBusy("import");
+    setError(null);
+    setImportResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/clients/${client.id}/bank-txns`, { method: "POST", body: fd });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(j.error ?? "导入失败");
+        return;
+      }
+      setImportResult(j);
+      router.refresh();
+    } catch {
+      setError("网络错误");
+    } finally {
+      setBusy(null);
+      if (csvRef.current) csvRef.current.value = "";
+    }
+  }
   const [draft, setDraft] = useState<{ subject: string; body: string; recipient: string; delivered: boolean } | null>(
     null,
   );
@@ -72,7 +105,61 @@ export function Reconciliation({
             把银行流水逐笔和已收单据对照，找出没有收据支撑的支出。
           </p>
         </div>
+        {rows.length > 0 && (
+          <button
+            onClick={() => csvRef.current?.click()}
+            disabled={busy !== null}
+            className="shrink-0 rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-muted transition-colors hover:border-line-strong hover:text-ink-900 disabled:opacity-50"
+          >
+            {busy === "import" ? "导入中…" : "导入对账单 CSV"}
+          </button>
+        )}
       </header>
+
+      <input
+        ref={csvRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) importCsv(f);
+        }}
+      />
+
+      {/* 导入结果：明确报出识别到哪几列、导入多少、跳过多少重复、多少行有问题 */}
+      {importResult && (
+        <div className="mt-4 rounded-xl border border-line bg-surface p-4 text-sm">
+          <div className="font-medium text-ink-900">
+            解析 {importResult.parsed} 笔支出 · 新导入 {importResult.imported} 笔
+            {importResult.duplicates > 0 && ` · 跳过重复 ${importResult.duplicates} 笔`}
+          </div>
+          <div className="mt-1 text-xs text-faint">
+            识别到的列：日期「{importResult.detected.date}」· 摘要「{importResult.detected.description}」· 金额「
+            {importResult.detected.amount}」
+          </div>
+          {importResult.errorCount > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs font-medium text-conf-med">
+                {importResult.errorCount} 行未能解析（已跳过，其余照常导入）
+              </summary>
+              <ul className="mt-1.5 space-y-0.5 text-[11px] text-muted">
+                {importResult.errors.map((e) => (
+                  <li key={e.line}>
+                    第 {e.line} 行：{e.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <button
+            onClick={() => setImportResult(null)}
+            className="mt-2 text-xs text-muted hover:text-ink-900"
+          >
+            知道了
+          </button>
+        </div>
+      )}
 
       {rows.length === 0 && (
         <div className="mt-6 rounded-xl border border-dashed border-line bg-surface px-6 py-16 text-center">
@@ -80,6 +167,13 @@ export function Reconciliation({
           <p className="mt-1.5 text-sm text-muted">
             导入银行对账单后，这里会逐笔和已收单据比对，列出缺收据的支出。
           </p>
+          <button
+            onClick={() => csvRef.current?.click()}
+            disabled={busy !== null}
+            className="mt-4 rounded-lg bg-ink-700 px-4 py-2 text-sm font-semibold text-white hover:bg-ink-800 disabled:opacity-50"
+          >
+            {busy === "import" ? "导入中…" : "导入对账单 CSV"}
+          </button>
         </div>
       )}
 
