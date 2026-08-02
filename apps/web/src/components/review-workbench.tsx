@@ -59,10 +59,66 @@ export function ReviewWorkbench({
     setLines((prev) => prev.map((l) => (l.id === lineId ? { ...l, taxCode } : l)));
   };
 
+  const [newLine, setNewLine] = useState<{ description: string; amount: string } | null>(null);
+  const [lineBusy, setLineBusy] = useState(false);
+
+  async function addLine() {
+    if (!newLine?.description.trim() || lineBusy) return;
+    setLineBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/documents/${doc.id}/lines`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: newLine.description, amount: newLine.amount || 0 }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(j.error ?? "加行失败");
+        return;
+      }
+      setNewLine(null);
+      router.refresh();
+    } catch {
+      setError("网络错误");
+    } finally {
+      setLineBusy(false);
+    }
+  }
+
+  async function deleteLine(lineId: string, description: string) {
+    if (lineBusy) return;
+    if (!window.confirm(`删除这一行？\n\n${description}`)) return;
+    setLineBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/documents/${doc.id}/lines?lineId=${encodeURIComponent(lineId)}`, {
+        method: "DELETE",
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(j.error ?? "删除失败");
+        return;
+      }
+      setLines((prev) => prev.filter((l) => l.id !== lineId));
+      router.refresh();
+    } catch {
+      setError("网络错误");
+    } finally {
+      setLineBusy(false);
+    }
+  }
+
   const assignedTotal = useMemo(
     () => lines.reduce((s, l) => s + l.amount, 0),
     [lines],
   );
+
+  // 行合计应等于票面不含税小计。对不上说明 OCR 漏行/多切行/金额抽错——
+  // 这是最容易被放过、也最容易导致入账金额错的地方，必须显式报出来。
+  const expectedSubTotal = doc.subTotal > 0 ? doc.subTotal : doc.total - doc.tax;
+  const lineGap = expectedSubTotal > 0 ? assignedTotal - expectedSubTotal : 0;
+  const hasGap = Math.abs(lineGap) >= 0.01;
   // QBO 要求每行都有有效税码，缺科目或缺税码都不能录入（契约 §4.8）。
   const allAssigned = lines.length > 0 && lines.every((l) => l.glAccountId && l.taxCode);
 
@@ -462,10 +518,22 @@ export function ReviewWorkbench({
                         )}
                       </div>
                     </div>
-                    <span
-                      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${c.bg} ${c.text}`}
-                    >
-                      <span className={`size-1.5 rounded-full ${c.dot}`} /> {c.label}
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${c.bg} ${c.text}`}
+                      >
+                        <span className={`size-1.5 rounded-full ${c.dot}`} /> {c.label}
+                      </span>
+                      {doc.status !== "synced" && (
+                        <button
+                          onClick={() => deleteLine(l.id, l.description)}
+                          disabled={lineBusy}
+                          title="删除这一行"
+                          className="rounded px-1 text-sm text-faint transition-colors hover:bg-conf-low-bg hover:text-conf-low disabled:opacity-40"
+                        >
+                          ×
+                        </button>
+                      )}
                     </span>
                   </div>
                   <div className="mt-2.5 grid gap-2 sm:grid-cols-[1.4fr_1fr]">
@@ -503,10 +571,66 @@ export function ReviewWorkbench({
             })}
             {lines.length === 0 && (
               <div className="rounded-lg border border-dashed border-line py-10 text-center text-sm text-faint">
-                该单据尚未产生行项目（OCR 未完成）
+                该单据尚未产生行项目（OCR 未完成或全部被删）
               </div>
             )}
           </div>
+
+          {/* 行合计对不上票面：最容易被放过、也最容易让入账金额错的地方 */}
+          {hasGap && (
+            <div className="mt-3 rounded-lg bg-conf-med-bg px-3 py-2 text-xs text-conf-med">
+              行合计 {money(assignedTotal)} 与票面小计 {money(expectedSubTotal)} 差 {money(Math.abs(lineGap))}
+              {lineGap < 0 ? "（少了，可能漏行）" : "（多了，可能重复切行）"} —— 加行 / 删行 / 改抬头金额来对平。
+            </div>
+          )}
+
+          {doc.status !== "synced" && (
+            <div className="mt-3">
+              {newLine ? (
+                <div className="rounded-lg border border-line bg-paper p-3">
+                  <div className="grid gap-2 sm:grid-cols-[1fr_120px]">
+                    <input
+                      autoFocus
+                      value={newLine.description}
+                      onChange={(e) => setNewLine({ ...newLine, description: e.target.value })}
+                      placeholder="行描述（如：A4 复印纸 5 包）"
+                      className="rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-ink-900"
+                    />
+                    <input
+                      value={newLine.amount}
+                      onChange={(e) => setNewLine({ ...newLine, amount: e.target.value })}
+                      placeholder="金额"
+                      inputMode="decimal"
+                      className="tnum rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-ink-900"
+                    />
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={addLine}
+                      disabled={lineBusy || !newLine.description.trim()}
+                      className="rounded-md bg-ink-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+                    >
+                      {lineBusy ? "添加中…" : "添加"}
+                    </button>
+                    <button
+                      onClick={() => setNewLine(null)}
+                      className="rounded-md px-3 py-1.5 text-xs font-medium text-muted hover:text-ink-900"
+                    >
+                      取消
+                    </button>
+                    <span className="self-center text-[11px] text-faint">科目与税码添加后再选</span>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setNewLine({ description: "", amount: "" })}
+                  className="w-full rounded-lg border border-dashed border-line py-2 text-xs font-medium text-muted transition-colors hover:border-line-strong hover:text-ink-900"
+                >
+                  + 加一行（OCR 漏抽时手工补）
+                </button>
+              )}
+            </div>
+          )}
         </section>
 
         {/* 右：录入 QBO 预览 */}
