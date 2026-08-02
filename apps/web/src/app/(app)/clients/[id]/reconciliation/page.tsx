@@ -12,7 +12,7 @@ export default async function ReconciliationPage({
   const { id } = await params;
   const client = await getClient(session.firmId, id);
   if (!client) notFound();
-  const { rows, period } = await getReconciliation(session.firmId, id);
+  const { rows, period, candidates } = await getReconciliation(session.firmId, id);
 
-  return <Reconciliation client={client} rows={rows} period={period} />;
+  return <Reconciliation client={client} rows={rows} period={period} candidates={candidates} />;
 }

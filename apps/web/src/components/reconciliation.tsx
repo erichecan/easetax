@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { Client, ReconRow } from "@/lib/types";
+import type { Client, ReconCandidate, ReconRow } from "@/lib/types";
 
 const money = (n: number) =>
   n.toLocaleString("en-CA", { style: "currency", currency: "CAD" });
@@ -12,10 +12,12 @@ export function Reconciliation({
   client,
   rows,
   period,
+  candidates,
 }: {
   client: Client;
   rows: ReconRow[];
   period: string;
+  candidates: ReconCandidate[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -56,6 +58,30 @@ export function Reconciliation({
   const [draft, setDraft] = useState<{ subject: string; body: string; recipient: string; delivered: boolean } | null>(
     null,
   );
+
+  // 人工裁决（契约 §4.6）：自动匹配一定有错判漏判，会计师要能改。
+  async function setMatch(txnId: string, matchStatus: string, matchedDocumentId?: string) {
+    if (busy) return;
+    setBusy(txnId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/clients/${client.id}/bank-txns/${txnId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matchStatus, matchedDocumentId: matchedDocumentId ?? null }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(j.error ?? "操作失败");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("网络错误");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   // 追票：生成催票内容并落记录。没有配邮件通道时只出草稿，由会计师自己发（不假装已发送）。
   async function chase(txnIds: string[], key: string) {
@@ -280,14 +306,38 @@ export function Reconciliation({
                       )}
                     </td>
                     <td className="tnum px-4 py-3 text-right font-medium text-ink-900">{money(r.txn.amount)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => chase([r.txn.id], r.txn.id)}
-                        disabled={busy !== null}
-                        className="rounded-md border border-line px-2.5 py-1 text-xs font-semibold text-ink-700 transition-colors hover:bg-ink-700/10 disabled:opacity-50"
-                      >
-                        {busy === r.txn.id ? "生成中…" : r.chaseCount > 0 ? "再催一次" : "提醒客户补单"}
-                      </button>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        {/* 自动匹配漏了的，人工指一张（契约 §4.6：人工裁决是 canonical） */}
+                        <select
+                          value=""
+                          disabled={busy !== null}
+                          onChange={(e) => e.target.value && setMatch(r.txn.id, "manual", e.target.value)}
+                          className="max-w-[150px] rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink-900 disabled:opacity-50"
+                        >
+                          <option value="">关联单据…</option>
+                          {candidates.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.vendor} · {money(c.total)} · {c.txnDate}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => setMatch(r.txn.id, "ignored")}
+                          disabled={busy !== null}
+                          title="这笔支出本就不需要收据（如银行手续费、利息）"
+                          className="rounded-md border border-line px-2 py-1 text-xs font-medium text-muted transition-colors hover:text-ink-900 disabled:opacity-50"
+                        >
+                          无需收据
+                        </button>
+                        <button
+                          onClick={() => chase([r.txn.id], r.txn.id)}
+                          disabled={busy !== null}
+                          className="rounded-md border border-line px-2.5 py-1 text-xs font-semibold text-ink-700 transition-colors hover:bg-ink-700/10 disabled:opacity-50"
+                        >
+                          {busy === r.txn.id ? "处理中…" : r.chaseCount > 0 ? "再催" : "催票"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -308,6 +358,7 @@ export function Reconciliation({
                 <th className="px-4 py-3 font-semibold">银行摘要</th>
                 <th className="px-4 py-3 text-right font-semibold">金额</th>
                 <th className="px-4 py-3 font-semibold">对账状态</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
@@ -340,6 +391,18 @@ export function Reconciliation({
                         <span className="size-1.5 rounded-full bg-conf-low" />
                         缺收据
                       </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {/* 人工裁决过的才可撤销：auto 是实时算的，撤销它没有意义 */}
+                    {(r.matchKind === "manual" || r.matchKind === "ignored") && (
+                      <button
+                        onClick={() => setMatch(r.txn.id, "unmatched")}
+                        disabled={busy !== null}
+                        className="rounded-md px-2 py-1 text-xs font-medium text-muted transition-colors hover:text-conf-low disabled:opacity-50"
+                      >
+                        撤销
+                      </button>
                     )}
                   </td>
                 </tr>

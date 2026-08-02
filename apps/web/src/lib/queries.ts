@@ -18,6 +18,7 @@ import type {
   DocumentRec,
   GlAccount,
   LineItem,
+  ReconCandidate,
   ReconRow,
   TaxCodeRef,
   TaxTreatment,
@@ -291,7 +292,7 @@ function periodLabel(dates: Date[]): string {
 export async function getReconciliation(
   firmId: string,
   clientId: string,
-): Promise<{ rows: ReconRow[]; period: string }> {
+): Promise<{ rows: ReconRow[]; period: string; candidates: ReconCandidate[] }> {
   const [txns, docs, notices] = await Promise.all([
     prisma.bankTxn.findMany({ where: { firmId, clientId }, orderBy: { date: "asc" } }),
     prisma.document.findMany({
@@ -348,7 +349,16 @@ export async function getReconciliation(
     };
   });
 
-  return { rows, period: periodLabel(txns.map((t) => t.date)) };
+  // 人工匹配的候选单据：给会计师挑的时候要看得出是哪张（供应商+金额+日期）
+  const candidates: ReconCandidate[] = reconDocs.map((d) => ({
+    id: d.id,
+    fileName: d.fileName,
+    vendor: d.vendorName ?? "—",
+    total: d.total ?? 0,
+    txnDate: d.txnDate ? d.txnDate.toISOString().slice(0, 10) : "",
+  }));
+
+  return { rows, period: periodLabel(txns.map((t) => t.date)), candidates };
 }
 
 export async function getDocumentForReview(

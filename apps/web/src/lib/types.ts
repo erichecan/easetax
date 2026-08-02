@@ -60,6 +60,15 @@ export type BankTxn = {
   amount: number;
 };
 
+// 人工匹配时可选的单据（契约 §4.6：人工裁决是 canonical）
+export type ReconCandidate = {
+  id: string;
+  fileName: string;
+  vendor: string;
+  total: number;
+  txnDate: string;
+};
+
 export type ReconRow = {
   txn: BankTxn;
   matchKind: MatchKind;
