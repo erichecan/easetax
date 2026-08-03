@@ -7,10 +7,16 @@
 //   见 docs/20260709-qbo-开发者账号与沙箱指引.md）
 import { IntuitQboProvider, intuitCredsFromEnv } from "@/lib/providers/qbo-intuit";
 import type { QboAccessContext } from "@/lib/providers/qbo";
+import { prisma } from "@/lib/db";
+import { encryptSecret } from "@/lib/crypto";
 
 // 沙箱里留下的痕迹带固定前缀，方便事后辨认/清理
 const VENDOR = "Easetax 链路验证供应商";
-const DOC_NUMBER = `EASETAX-VERIFY-${new Date().toISOString().slice(0, 10)}`;
+// ⚠️ QBO DocNumber 上限 21 字符，超了报 code 2050（就是本脚本第一次实测撞到的）。
+// 这里故意留在上限内，好让「建单成功」与「provider 的截断逻辑」是两件独立可判的事。
+const DOC_NUMBER = `EV-${new Date().toISOString().slice(0, 10)}-${process.pid}`.slice(0, 21);
+// 超长发票号：真实存在（发票号来自 OCR），用来实测 provider 的截断是否真能让 QBO 收下
+const LONG_DOC_NUMBER = `EASETAX-LONG-INVOICE-NO-${new Date().toISOString().slice(0, 10)}-${process.pid}`;
 
 // 最小合法 PDF（不到 300 字节），用来验证附件通道，不引外部文件
 const TINY_PDF = Buffer.from(
@@ -117,14 +123,60 @@ async function main() {
   }
   ok(`重复录入被拦下，命中原单 Id=${again.id}（没有产生第二张）`);
 
+  // 8. 超长发票号：provider 应截到 21 字符让 QBO 收下，而不是把 400 抛给会计师
+  const longPosted = await qbo
+    .post(ctx, {
+      entity: "Bill",
+      vendorName: VENDOR,
+      docNumber: LONG_DOC_NUMBER,
+      txnDate: null,
+      dueDate: null,
+      currency: null,
+      lines: [line],
+    })
+    .catch((e) => fail(`超长发票号（${LONG_DOC_NUMBER.length} 字符）建单失败：${e.message}`));
+  if (longPosted.docNumber === LONG_DOC_NUMBER) fail("超长发票号没有被截断，QBO 本该拒收");
+  ok(`超长发票号 ${LONG_DOC_NUMBER.length} 字符 → 截为 ${longPosted.docNumber}（${longPosted.docNumber?.length}），Bill Id=${longPosted.id}`);
+
+  // 9. 同一个超长号再来一次：截断值一致，去重仍要命中（截断算两遍就会在这里露馅）
+  const longAgain = await qbo
+    .post(ctx, {
+      entity: "Bill",
+      vendorName: VENDOR,
+      docNumber: LONG_DOC_NUMBER,
+      txnDate: null,
+      dueDate: null,
+      currency: null,
+      lines: [line],
+    })
+    .catch((e) => fail(`超长发票号复跑失败：${e.message}`));
+  if (!longAgain.duplicate || longAgain.id !== longPosted.id) {
+    fail(`截断后去重失效：期望命中 Id=${longPosted.id}，实际 duplicate=${longAgain.duplicate} Id=${longAgain.id}`);
+  }
+  ok("超长发票号复跑也命中去重（截断值在查重与建单两处一致）");
+
   console.log("\n全部通过。可在沙箱里核对：");
   console.log(`  Bill Id=${posted.id} · DocNumber=${DOC_NUMBER} · 供应商=${VENDOR}`);
+  console.log(`  Bill Id=${longPosted.id} · DocNumber=${longPosted.docNumber}（由超长号截得）`);
 
-  // refresh token 每次刷新都轮换，不回填的话下次跑这个脚本就是 400 invalid_grant
+  // refresh token 会轮换，且**脚本与 app 共用同一个**：
+  // 只更新 .env 不更新库，库里那个就作废了，表现出来是 app 莫名丢了 QBO 连接。
+  // 所以这里两边一起更新，并明说改了什么。
   if (ctx.rotatedRefreshToken) {
-    console.log("\n⚠️  refresh token 已轮换，把 .env 里的 QBO_REFRESH_TOKEN 换成：");
-    console.log(`  ${ctx.rotatedRefreshToken}`);
+    console.log("\n⚠️  Intuit 轮换了 refresh token。");
+    console.log("   把 .env 的 QBO_REFRESH_TOKEN 换成（不换的话下次跑是 400 invalid_grant）：");
+    console.log(`     ${ctx.rotatedRefreshToken}`);
+    const updated = await prisma.client.updateMany({
+      where: { qboRealmId: realmId },
+      data: { qboRefreshToken: encryptSecret(ctx.rotatedRefreshToken) },
+    });
+    console.log(
+      updated.count
+        ? `   已同步回写数据库 ${updated.count} 个客户的 token —— 否则 app 侧连接会失效。`
+        : "   库里没有用这个 realmId 的客户，无需回写。",
+    );
   }
+  await prisma.$disconnect();
 }
 
 main().catch((e) => {

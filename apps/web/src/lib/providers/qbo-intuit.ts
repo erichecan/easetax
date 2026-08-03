@@ -1,5 +1,8 @@
-// 真实 QBO 实现。API 形状依据 docs/20260707-qbo-api-录入链验证.md（已做过技术验证）。
-// ⚠️ 未经真实 sandbox 实测（缺 Intuit 凭据）：minorversion 号与加拿大税字段组合仍需实测确认。
+// 真实 QBO 实现。API 形状依据 docs/20260707-qbo-api-录入链验证.md。
+// 2026-08-03 已用真实沙箱（realmId 9341457529837142）实测通过 minorversion=75 下的
+// 刷 token / 列科目 / 列税码 / 查建供应商 / 建 Bill / 挂附件 / 去重（scripts/verify-qbo.ts）。
+// ⚠️ 仍未实测：**加拿大税**。沙箱是美国公司，税码只有 TAX/NON/California/Tucson，
+// 没有 GST/HST —— 行级 TaxCodeRef + GlobalTaxCalculation 那套（契约 G6）要等加拿大账套才能验。
 // 加拿大公司：行级 TaxCodeRef + GlobalTaxCalculation 表达税，税额交给 QBO 算（契约 G6）。
 import { withRetry } from "@/lib/retry";
 import type {
@@ -30,6 +33,21 @@ export function intuitCredsFromEnv(): IntuitCreds | null {
 
 function apiBase(env: IntuitCreds["environment"]): string {
   return env === "production" ? "https://quickbooks.api.intuit.com" : "https://sandbox-quickbooks.api.intuit.com";
+}
+
+// QBO 的 DocNumber 上限 21 字符（沙箱实测：超了报 code 2050 ValidationFault）。
+// 发票号来自 OCR，长过 21 的真实存在，原样传过去就是一个会计师看不懂的 400。
+//
+// **保留尾部**而不是头部：发票号的区分度几乎都在尾部流水号上，
+// 截头部会把 `…0000012345` 和 `…0000012346` 截成同一个值，去重就会误判成重复单。
+// 完整号仍存在我方 Extraction.invoiceNo 里，审计不丢。
+export const QBO_DOC_NUMBER_MAX = 21;
+
+export function qboDocNumber(raw: string | null): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  return s.length <= QBO_DOC_NUMBER_MAX ? s : s.slice(-QBO_DOC_NUMBER_MAX);
 }
 
 type QueryResponse<T> = { QueryResponse?: Record<string, T[] | undefined> };
@@ -128,16 +146,20 @@ export class IntuitQboProvider implements QboProvider {
   }
 
   async post(ctx: QboAccessContext, input: QboPostInput): Promise<QboPostResult> {
+    // 截断必须在查重之前算好，且查重与建单用同一个值 —— 分别算的话，
+    // 查重查的是完整号（QBO 里根本不存在），必然查不到，去重直接失效。
+    const docNumber = qboDocNumber(input.docNumber);
+
     // QBO 侧二次去重：QBO 不强制 DocNumber 唯一，只能自己查（验证文档 §动作 5）。
-    if (input.docNumber) {
-      const escaped = input.docNumber.replace(/'/g, "\\'");
+    if (docNumber) {
+      const escaped = docNumber.replace(/'/g, "\\'");
       const existing = await this.query<{ Id: string; DocNumber?: string }>(
         ctx,
         `SELECT * FROM ${input.entity} WHERE DocNumber = '${escaped}'`,
         input.entity,
       );
       if (existing[0]) {
-        return { entity: input.entity, id: existing[0].Id, docNumber: input.docNumber, duplicate: true };
+        return { entity: input.entity, id: existing[0].Id, docNumber, duplicate: true };
       }
     }
 
@@ -157,7 +179,7 @@ export class IntuitQboProvider implements QboProvider {
       // 票面金额为不含税小计时用 TaxExcluded；税额由 QBO 按 TaxCodeRef 计算（契约 G6）
       GlobalTaxCalculation: "TaxExcluded",
       ...(input.txnDate ? { TxnDate: input.txnDate } : {}),
-      ...(input.docNumber ? { DocNumber: input.docNumber } : {}),
+      ...(docNumber ? { DocNumber: docNumber } : {}),
       ...(input.currency ? { CurrencyRef: { value: input.currency } } : {}),
     };
 
@@ -171,7 +193,7 @@ export class IntuitQboProvider implements QboProvider {
         method: "POST",
         body: JSON.stringify(body),
       });
-      return { entity: "Bill", id: r.Bill.Id, docNumber: r.Bill.DocNumber ?? input.docNumber, duplicate: false };
+      return { entity: "Bill", id: r.Bill.Id, docNumber: r.Bill.DocNumber ?? docNumber, duplicate: false };
     }
 
     // 已付 → Purchase：必须指定资金来源账户（银行/信用卡），否则 QBO 拒收。
@@ -188,7 +210,7 @@ export class IntuitQboProvider implements QboProvider {
       method: "POST",
       body: JSON.stringify(body),
     });
-    return { entity: "Purchase", id: r.Purchase.Id, docNumber: r.Purchase.DocNumber ?? input.docNumber, duplicate: false };
+    return { entity: "Purchase", id: r.Purchase.Id, docNumber: r.Purchase.DocNumber ?? docNumber, duplicate: false };
   }
 
   // 原件挂 Attachable：multipart，两个 part（元数据 + 文件内容）。
