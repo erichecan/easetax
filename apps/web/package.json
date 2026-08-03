@@ -9,7 +9,8 @@
     "lint": "eslint",
     "seed": "node --env-file=.env --import tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "test": "node --test --import tsx \"src/**/*.test.ts\""
+    "test": "node --test --import tsx \"src/**/*.test.ts\"",
+    "verify:qbo": "node --env-file=.env --import tsx scripts/verify-qbo.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

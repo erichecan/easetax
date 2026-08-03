@@ -2,6 +2,7 @@ import { SignJWT } from "jose";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { intuitCredsFromEnv } from "@/lib/providers/qbo-intuit";
+import { qboRedirectUri } from "@/lib/qbo-redirect";
 
 const AUTH_URL = "https://appcenter.intuit.com/connect/oauth2";
 const SCOPE = "com.intuit.quickbooks.accounting";
@@ -21,7 +22,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return Response.json({ error: "服务端未配置 Intuit 凭据（QBO_CLIENT_ID/SECRET）" }, { status: 503 });
   }
 
-  const redirectUri = process.env.QBO_REDIRECT_URI ?? new URL(`/api/clients/${id}/qbo/callback`, req.url).toString();
+  // 固定回调路径（见 /api/qbo/callback 的注释）；客户身份走 state，不走 URL。
+  const redirectUri = qboRedirectUri(req);
   const state = await new SignJWT({ clientId: id, firmId: s.firmId })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()

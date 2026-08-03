@@ -4,16 +4,20 @@ import { prisma } from "@/lib/db";
 import { encryptSecret } from "@/lib/crypto";
 import { intuitCredsFromEnv } from "@/lib/providers/qbo-intuit";
 import { getQboProvider } from "@/lib/providers";
+import { qboRedirectUri } from "@/lib/qbo-redirect";
 
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 
 // OAuth 回调：校验 state → 用 code 换 token → 加密存 refreshToken + realmId
 // → 顺带把该客户的科目表与税码表同步进本地 cache（契约 §4.5/§4.8）。
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+//
+// ⚠️ 这个路径**必须是固定的、不带 clientId**：Intuit 要求 redirect_uri 与开发者门户里
+// 登记的 URI 精确匹配，而登记是一次性的——每客户一个回调路径就得登记 N 条，做不到。
+// 客户身份改从签名 state 里取（state 本来就带 clientId + firmId，且已防 CSRF/跨租户）。
+export async function GET(req: Request) {
   const s = await getSession();
   if (!s) return Response.json({ error: "未授权访问" }, { status: 401 });
 
-  const { id } = await params;
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const realmId = url.searchParams.get("realmId");
@@ -22,12 +26,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return Response.json({ error: "回调缺少 code / realmId / state" }, { status: 400 });
   }
 
-  // state 校验：必须是我们签发的、未过期的，且客户与租户都对得上（防 CSRF / 跨 firm 串号）
+  // state 校验：必须是我们签发的、未过期的，且租户对得上（防 CSRF / 跨 firm 串号）
+  let id: string;
   try {
     const { payload } = await jwtVerify(state, new TextEncoder().encode(process.env.JWT_SECRET));
-    if (payload.clientId !== id || payload.firmId !== s.firmId) {
-      return Response.json({ error: "state 与当前客户不匹配" }, { status: 400 });
+    if (payload.firmId !== s.firmId || typeof payload.clientId !== "string") {
+      return Response.json({ error: "state 与当前登录身份不匹配" }, { status: 400 });
     }
+    id = payload.clientId;
   } catch {
     return Response.json({ error: "state 校验失败或已过期" }, { status: 400 });
   }
@@ -38,7 +44,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const creds = intuitCredsFromEnv();
   if (!creds) return Response.json({ error: "服务端未配置 Intuit 凭据" }, { status: 503 });
 
-  const redirectUri = process.env.QBO_REDIRECT_URI ?? new URL(`/api/clients/${id}/qbo/callback`, req.url).toString();
   const basic = Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString("base64");
   const res = await fetch(TOKEN_URL, {
     method: "POST",
@@ -47,7 +52,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
     },
-    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri }),
+    // 换 token 时的 redirect_uri 必须与授权时那次逐字一致，所以两处共用 qboRedirectUri()
+    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: qboRedirectUri(req) }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
