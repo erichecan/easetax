@@ -41,7 +41,8 @@ model Client {
   industry          String?
   qboRealmId        String? // 空 = 未连 QBO（一等状态，契约 §4.2）
   qboRefreshToken   String? // 加密存储（契约 G5/非功能需求）
-  inboundEmail      String           @unique // 派生规则钉死，契约 §4.3
+  inboundEmail      String           @unique // 收单机器人地址，派生规则钉死，契约 §4.3
+  contactEmail      String? // 客户联系人邮箱 = 出站催票收件人，契约 §4.13。禁止与 inboundEmail 互相回退
   // 契约 §4.11：税码规则输入 + 绿色通道配置
   qboPaymentAccountId String? // 已付单据录 Purchase 时冲的银行/信用卡账户 = QBO Account.Id（契约 G9）
   province          String? // domain Province，税码规则表输入（契约 §4.8）

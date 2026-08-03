@@ -25,11 +25,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const draft = buildChaseDraft(client.name, target, period);
-  // 收件人：优先请求指定，否则回退到该客户的收单邮箱（客户自己能看到）。
-  const recipient = body.recipient?.trim() || client.inboundEmail;
+  // 收件人：优先请求指定，否则用客户联系人邮箱。
+  // ⛔ 契约 §4.13：绝不回退到 inboundEmail —— 那是收单机器人地址，
+  // 催票寄过去客户永远收不到，还会触发一次无附件的入站解析。
+  const recipient = body.recipient?.trim() || client.contactEmail?.trim();
+  if (!recipient) {
+    return Response.json(
+      { error: "该客户还没有联系人邮箱，请先到「客户设置」填写后再催票" },
+      { status: 400 },
+    );
+  }
 
   const notifier = getNotifyProvider();
-  const sent = await notifier.send({ to: recipient, subject: draft.subject, body: draft.body });
+  const sent = await notifier.send({
+    to: recipient,
+    subject: draft.subject,
+    body: draft.body,
+    replyTo: client.inboundEmail, // 客户回复时带上票据即自动入账
+  });
 
   await prisma.chaseNotice.createMany({
     data: draft.txnIds.map((bankTxnId) => ({
@@ -54,6 +67,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         count: draft.txnIds.length,
         delivered: sent.delivered,
         provider: notifier.name,
+        ...(sent.error ? { sendError: sent.error } : {}),
       } as Prisma.InputJsonValue,
     },
   });
@@ -61,6 +75,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   return Response.json({
     ok: true,
     delivered: sent.delivered,
+    // 配了通道却没发出去：UI 要说清楚原因，不能和"本来就只出草稿"混为一谈
+    sendError: sent.error ?? null,
     count: draft.txnIds.length,
     recipient,
     subject: draft.subject,

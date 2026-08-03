@@ -8,6 +8,7 @@ import { inboundEmailFor } from "@/domain";
 const FIRM_ID = "firm-demo";
 const CLIENT_ID = "client-demo";
 const DEMO_EMAIL = "demo@easetax.ca";
+const CLIENT_CONTACT_EMAIL = "owner@mapleleafdental.ca";
 const DEMO_PASSWORD = "easetax-demo"; // 仅 dev 种子；上线换
 
 // 模拟客户 QBO 科目表（id = QBO Account.Id，契约 G2）。
@@ -130,13 +131,14 @@ async function main() {
 
   await prisma.client.upsert({
     where: { id: CLIENT_ID },
-    update: { province: "ON", taxNumber: "800123456RT0001" },
+    update: { province: "ON", taxNumber: "800123456RT0001", contactEmail: CLIENT_CONTACT_EMAIL },
     create: {
       id: CLIENT_ID,
       firmId: firm.id,
       name: "Maple Leaf Dental",
       industry: "牙科诊所",
       inboundEmail: inboundEmailFor(CLIENT_ID),
+      contactEmail: CLIENT_CONTACT_EMAIL, // 催票收件人（契约 §4.13），与收单邮箱不是一回事
       qboRealmId: null, // 未连 QBO（一等状态）
       province: "ON", // 税码规则表输入（契约 §4.8）
       taxNumber: "800123456RT0001", // 购方 GST 号，≥$150 凭证要件

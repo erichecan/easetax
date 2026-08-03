@@ -6,6 +6,7 @@ import { PROVINCES, type Province } from "@/domain";
 type Body = {
   province?: string | null;
   taxNumber?: string | null;
+  contactEmail?: string | null;
   qboPaymentAccountId?: string | null;
   autoPostEnabled?: boolean;
   autoPostThreshold?: number | string | null;
@@ -31,6 +32,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     data.province = p;
   }
   if ("taxNumber" in body) data.taxNumber = body.taxNumber?.trim() || null;
+  if ("contactEmail" in body) {
+    const e = body.contactEmail?.trim() || null;
+    // 只挡明显不是邮箱的输入（催票发不出去比填错更难排查）；不做花哨的 RFC 校验
+    if (e && !/^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/.test(e)) {
+      return Response.json({ error: "联系人邮箱格式不正确" }, { status: 400 });
+    }
+    data.contactEmail = e;
+  }
   if ("qboPaymentAccountId" in body) data.qboPaymentAccountId = body.qboPaymentAccountId?.trim() || null;
   if ("autoPostEnabled" in body) data.autoPostEnabled = Boolean(body.autoPostEnabled);
   if ("autoPostThreshold" in body) {

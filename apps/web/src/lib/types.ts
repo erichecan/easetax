@@ -43,7 +43,8 @@ export type Client = {
   industry: string;
   qboConnected: boolean;
   qboRealmId: string | null;
-  inboundEmail: string;
+  inboundEmail: string; // 收单机器人地址（契约 §4.3）
+  contactEmail: string | null; // 客户联系人邮箱 = 催票收件人（契约 §4.13）
   // 税码规则输入 + 绿色通道配置（契约 §4.11）
   province: string | null;
   taxNumber: string | null;

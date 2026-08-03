@@ -236,6 +236,23 @@ received → ocr_processing → ocr_done → classifying → needs_review
 |---|---|---|
 | 新表 `ChaseNotice` | `firmId`、`clientId`、`bankTxnId`、`channel`、`recipient`、`subject`、`body`、`sentAt`、`sentBy` | 一笔流水可有多条（催了 N 次）；`sentAt` 为空表示只生成未发送 |
 
+### 4.13 收件人地址：`contactEmail` 是人，`inboundEmail` 是机器（2026-08-02 追加）
+
+两个地址语义完全不同，**不可互相回退**：
+
+| 字段 | 语义 | 谁读它 |
+|---|---|---|
+| `Client.inboundEmail` | 收单机器人地址（§4.3 派生钉死），客户**寄票据进来**用 | 入站 webhook |
+| `Client.contactEmail` | 客户联系人真实邮箱，**我们寄催票出去**用 | 出站 notify provider |
+
+裁定：追票收件人 = `Client.contactEmail`。**禁止**在 `contactEmail` 缺失时回退到 `inboundEmail` —— 那是把催票信寄给收单机器人，客户永远收不到，还会触发一次无附件的入站解析。缺 `contactEmail` 时追票接口直接 400，要求先去客户设置里填。
+
+催票信的 `Reply-To` 设为 `inboundEmail`：客户点「回复」并带上票据照片，就直接落进入站管道自动入账。这是两个地址唯一的正当交汇点。
+
+| 表 | 字段 | 语义 |
+|---|---|---|
+| `Client` | `contactEmail String?` | 客户联系人邮箱，出站催票收件人。空 = 不能发催票（只能生成草稿人工转发） |
+
 ### 4.11 因上述裁定新增的字段（schema 增量）
 
 | 表 | 字段 | 语义 |

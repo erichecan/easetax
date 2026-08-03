@@ -55,9 +55,13 @@ export function Reconciliation({
       if (csvRef.current) csvRef.current.value = "";
     }
   }
-  const [draft, setDraft] = useState<{ subject: string; body: string; recipient: string; delivered: boolean } | null>(
-    null,
-  );
+  const [draft, setDraft] = useState<{
+    subject: string;
+    body: string;
+    recipient: string;
+    delivered: boolean;
+    sendError: string | null;
+  } | null>(null);
 
   // 人工裁决（契约 §4.6）：自动匹配一定有错判漏判，会计师要能改。
   async function setMatch(txnId: string, matchStatus: string, matchedDocumentId?: string) {
@@ -99,7 +103,13 @@ export function Reconciliation({
         setError(j.error ?? "追票失败");
         return;
       }
-      setDraft({ subject: j.subject, body: j.body, recipient: j.recipient, delivered: j.delivered });
+      setDraft({
+        subject: j.subject,
+        body: j.body,
+        recipient: j.recipient,
+        delivered: j.delivered,
+        sendError: j.sendError ?? null,
+      });
       router.refresh();
     } catch {
       setError("网络错误");
@@ -215,6 +225,12 @@ export function Reconciliation({
                 <p className="mt-1 text-sm text-muted">
                   {draft.delivered ? (
                     <>已发送至 <span className="font-mono">{draft.recipient}</span>，并记入追票历史。</>
+                  ) : draft.sendError ? (
+                    <>
+                      邮件通道已接，但这封<strong>没发出去</strong>：
+                      <span className="text-conf-low">{draft.sendError}</span>
+                      。内容已记入追票历史，可复制后自行发送，或稍后重试。
+                    </>
                   ) : (
                     <>
                       当前未接邮件通道，<strong>没有真的发送</strong>。内容已记入追票历史，请复制后自行发给客户。

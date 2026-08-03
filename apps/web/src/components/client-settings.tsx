@@ -24,6 +24,7 @@ export function ClientSettings({
   const [form, setForm] = useState({
     province: client.province ?? "",
     taxNumber: client.taxNumber ?? "",
+    contactEmail: client.contactEmail ?? "",
     qboPaymentAccountId: client.qboPaymentAccountId ?? "",
     autoPostEnabled: client.autoPostEnabled,
     autoPostThreshold: client.autoPostThreshold?.toString() ?? "",
@@ -99,6 +100,25 @@ export function ClientSettings({
           </button>
         </div>
         <div className="mt-3 text-xs text-faint">支持 PDF、图片（扫描件 / 手机拍照）、HEIC。单文件上限 20MB。</div>
+
+        <div className="mt-5 border-t border-line pt-4">
+          <label className="block">
+            <span className="text-xs text-faint">客户联系人邮箱（催票发给谁）</span>
+            <input
+              type="email"
+              value={form.contactEmail}
+              onChange={(e) => setForm({ ...form, contactEmail: e.target.value })}
+              onBlur={() => save({ contactEmail: form.contactEmail })}
+              placeholder="owner@client.ca"
+              className="mt-1 w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm text-ink-900"
+            />
+          </label>
+          <p className="mt-2 text-xs text-faint">
+            与上面的收单邮箱是两回事：上面那个是<b>机器地址</b>，客户往里寄票；这个是<b>真人地址</b>，
+            我们往外寄催票信。没填就发不了催票，只能生成草稿自己转发。
+            催票信的回复地址会设成收单邮箱 —— 客户直接回复并附上票据即自动入账。
+          </p>
+        </div>
       </section>
 
       <section className="mt-4 rounded-xl border border-line bg-surface p-6">
