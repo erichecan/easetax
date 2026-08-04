@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 环境变量模板例外（模板可提交，真实 .env/.env.local 不提交）
+!.env.example
+
+# 本地存储（dev 原件）
+.storage/

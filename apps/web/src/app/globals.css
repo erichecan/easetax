@@ -10,6 +10,8 @@
   --color-ink-500: #2e7d5b;
 
   /* 暖金强调 — 待审注意力 */
+  /* gold-800：唯一能承载白色小字的金（白字 5.6:1）；gold-700 只有 4.47:1，差一点点。 */
+  --color-gold-800: #8a5d19;
   --color-gold-700: #a06d1f;
   --color-gold-600: #c88a2e;
   --color-gold-100: #f3e6cd;
@@ -22,6 +24,21 @@
   --color-line-strong: #d3dbd8;
   --color-muted: #64756f;
   --color-faint: #93a19c;
+
+  /* 流程五段专用色 —— 像地铁线路色：表达「这是第几段」，不表达状态好坏。
+     刻意走一条冷→暖的色相路径（蓝→青→墨绿→金→赤陶），让推进感成为颜色本身的事。
+     两个版本：亮版给色带/量条，深版给序号圆（白字需 ≥4.5:1）。
+     ⚠️ 这组色只允许出现在流程段标识上，不得用于状态；警示红留给 conf-low，不进这组。 */
+  --color-stage-1: #1e5f8e;
+  --color-stage-1-deep: #17496e;
+  --color-stage-2: #0d8a80;
+  --color-stage-2-deep: #0b7269;
+  --color-stage-3: #2f7d63;
+  --color-stage-3-deep: #1f4d3f;
+  --color-stage-4: #c88a2e;
+  --color-stage-4-deep: #8a5d19;
+  --color-stage-5: #a8481f;
+  --color-stage-5-deep: #8a3b18;
 
   /* 置信度语义 */
   --color-conf-high: #2e7d5b;

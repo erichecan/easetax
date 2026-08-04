@@ -109,7 +109,7 @@ received → ocr_processing → ocr_done → classifying → needs_review
 | POST | `/api/auth/login` | 公开 |
 | GET/POST | `/api/clients` | ✅ |
 | GET | `/api/clients/:id/qbo/connect` → 302 到 Intuit | ✅ |
-| GET | `/api/clients/:id/qbo/callback` | ✅（含 state 校验）|
+| GET | `/api/qbo/callback` | ✅（含 state 校验；路径固定不带 :id，Intuit 要求 redirect_uri 精确匹配登记值）|
 | POST | `/api/documents/upload` | ✅ |
 | POST | `/api/inbound/email` | 🔑 入站签名校验（非 JWT，webhook）|
 | GET | `/api/documents?clientId=&status=` | ✅ |

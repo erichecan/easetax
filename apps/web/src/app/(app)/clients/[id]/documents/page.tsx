@@ -1,16 +1,7 @@
-import { notFound } from "next/navigation";
-import { clientById, documentsByClient } from "@/lib/mock";
-import { DocumentQueue } from "@/components/document-queue";
+import { redirect } from "next/navigation";
 
-export default async function DocumentsPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+// 单据队列已并入按流程编排的客户工作台；保留此路由，旧链接不 404。
+export default async function DocumentsRedirect({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const client = clientById(id);
-  if (!client) notFound();
-  const docs = documentsByClient(id);
-
-  return <DocumentQueue client={client} docs={docs} />;
+  redirect(`/clients/${id}`);
 }

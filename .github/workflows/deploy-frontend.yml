@@ -16,21 +16,88 @@ jobs:
       IMAGE: us-central1-docker.pkg.dev/supply-491510/easetax/frontend:latest
     steps:
       - uses: actions/checkout@v4
+
+      # 缺关键 Secret 时**在构建之前**就停，别浪费构建时间去部署一个每页 500 的服务。
+      # 之前这个工作流一个环境变量都不传，部署出来的容器连不上数据库。
+      - name: Preflight — 必需 Secret 检查
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+        run: |
+          missing=""
+          [ -z "$DATABASE_URL" ] && missing="$missing DATABASE_URL"
+          [ -z "$JWT_SECRET" ] && missing="$missing JWT_SECRET"
+          [ -z "$TOKEN_ENCRYPTION_KEY" ] && missing="$missing TOKEN_ENCRYPTION_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少必需的 GitHub Secret:$missing"
+            echo "在 Settings → Secrets and variables → Actions 里添加后重跑。"
+            exit 1
+          fi
+          echo "必需 Secret 齐全"
+
       - uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
       - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
       - name: Build
         run: docker build -t ${{ env.IMAGE }} -f apps/web/Dockerfile apps/web
       - run: docker push ${{ env.IMAGE }}
+
+      # 运行时配置。GCS_BUCKET **刻意未配**（用户暂不建 bucket）：
+      # 浏览与复核可用，但上传单据与录入 QBO 会抛
+      #   「生产环境必须配置 GCS_BUCKET」（src/lib/providers/storage.ts）。
+      # 要开放上传，先建加拿大区 bucket 再把 GCS_BUCKET 加进来。
+      #
+      # 密钥目前经 GitHub Secrets 注入到 Cloud Run 环境变量。够用，但值会出现在
+      # `gcloud run services describe` 的输出里 —— 有真实客户数据前应改用
+      # Secret Manager + `--set-secrets`。
+      # 用 --env-vars-file 而不是 --set-env-vars：后者要拿一个字符做分隔符，
+      # 而 DATABASE_URL 是 postgres://user:pass@host 这种形状，几乎任何分隔符都可能撞上。
+      # 走文件 + json.dumps 转义，值里有什么字符都不会截断。空值的可选项直接不写入。
       - name: Deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          INBOUND_WEBHOOK_SECRET: ${{ secrets.INBOUND_WEBHOOK_SECRET }}
+          QBO_CLIENT_ID: ${{ secrets.QBO_CLIENT_ID }}
+          QBO_CLIENT_SECRET: ${{ secrets.QBO_CLIENT_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ secrets.RESEND_FROM }}
         run: |
+          python3 - > /tmp/run-env.yaml <<'PY'
+          import os, json
+          optional = ["INBOUND_WEBHOOK_SECRET", "QBO_CLIENT_ID", "QBO_CLIENT_SECRET",
+                      "ANTHROPIC_API_KEY", "RESEND_API_KEY", "RESEND_FROM"]
+          for k in ["DATABASE_URL", "JWT_SECRET", "TOKEN_ENCRYPTION_KEY"] + optional:
+              v = os.environ.get(k, "")
+              if v:
+                  print(f"{k}: {json.dumps(v)}")
+          print('QBO_ENVIRONMENT: "sandbox"')
+          PY
+          echo "注入的环境变量（只列键名）："; cut -d: -f1 /tmp/run-env.yaml | sed 's/^/  /'
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image ${{ env.IMAGE }} --region ${{ env.REGION }} --project ${{ env.PROJECT_ID }} \
-            --allow-unauthenticated --min-instances=0 --max-instances=3 --cpu=1 --memory=512Mi --quiet
+            --allow-unauthenticated --min-instances=0 --max-instances=3 --cpu=1 --memory=512Mi --quiet \
+            --env-vars-file /tmp/run-env.yaml
+          rm -f /tmp/run-env.yaml
+
+      # 光看 deploy 命令成功不算数（CLAUDE.md 9.3）：必须真访问生产 URL。
+      # 首页 200 只说明容器起来了；再打一个要读数据库的路由，才知道 DATABASE_URL 真的通。
       - name: Verify
         run: |
           URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --project ${{ env.PROJECT_ID }} --format="value(status.url)")
           echo "Deployed: $URL"
-          curl -sf -o /dev/null -w "HTTP %{http_code}\n" "$URL"
+          code=$(curl -s -o /dev/null -w "%{http_code}" "$URL/login")
+          echo "GET /login → $code"
+          [ "$code" = "200" ] || { echo "::error::登录页返回 $code，容器未正常启动"; exit 1; }
+          # 未登录访问受保护路由应是 307 重定向到登录页，不该是 500。
+          # 返回 500 = 容器起来了但数据库连不上，属于「部署成功但服务不可用」。
+          code=$(curl -s -o /dev/null -w "%{http_code}" "$URL/clients")
+          echo "GET /clients（未登录）→ $code"
+          [ "$code" = "500" ] && { echo "::error::受保护路由 500，多半是 DATABASE_URL 不通"; exit 1; }
+          echo "部署验证通过"

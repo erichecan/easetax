@@ -1,0 +1,219 @@
+// Easetax AP 工作台 — 唯一模型来源。
+// 对应数据契约 docs/20260708-data-ownership-contract.md §3。
+// 枚举值（status/confidence/source/role/matchStatus）以 src/domain 为 SSOT，DB 存 String。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7：datasource 不再带 url。迁移连接串在 prisma.config.ts，
+// 运行时通过 driver adapter 传入（见 src/lib/db.ts）。
+datasource db {
+  provider = "postgresql"
+}
+
+// ---- 租户 / 主体 ----
+
+model Firm {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  users     User[]
+  clients   Client[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  firmId       String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("accountant") // domain UserRole
+  createdAt    DateTime @default(now())
+  firm         Firm     @relation(fields: [firmId], references: [id])
+
+  @@index([firmId])
+}
+
+model Client {
+  id                String           @id @default(cuid())
+  firmId            String
+  name              String
+  industry          String?
+  qboRealmId        String? // 空 = 未连 QBO（一等状态，契约 §4.2）
+  qboRefreshToken   String? // 加密存储（契约 G5/非功能需求）
+  inboundEmail      String           @unique // 收单机器人地址，派生规则钉死，契约 §4.3
+  contactEmail      String? // 客户联系人邮箱 = 出站催票收件人，契约 §4.13。禁止与 inboundEmail 互相回退
+  // 契约 §4.11：税码规则输入 + 绿色通道配置
+  qboPaymentAccountId String? // 已付单据录 Purchase 时冲的银行/信用卡账户 = QBO Account.Id（契约 G9）
+  province          String? // domain Province，税码规则表输入（契约 §4.8）
+  taxNumber         String? // 购方 GST/HST 号，≥$150 凭证要件（契约 §4.9）
+  autoPostEnabled   Boolean          @default(false) // 绿色通道总开关（契约 §4.10）
+  autoPostThreshold Decimal?         @db.Decimal(14, 2) // 自动过账金额上限，空 = 用默认 200
+  createdAt         DateTime         @default(now())
+  firm              Firm             @relation(fields: [firmId], references: [id])
+  documents         Document[]
+  bankTxns          BankTxn[]
+  glAccounts        GlAccountCache[]
+  taxCodes          TaxCodeCache[]
+
+  @@index([firmId])
+}
+
+// ---- 单据主链 ----
+
+model Document {
+  id         String      @id @default(cuid())
+  firmId     String
+  clientId   String
+  source     String // domain DocSource: email|upload
+  fileName   String
+  mimeType   String
+  storageKey String
+  fileHash   String
+  status     String      @default("received") // domain DocStatus，契约 §4.1
+  settlement String? // domain Settlement: paid|unpaid，canonical（契约 G9）；决定录 Expense 还是 Bill
+  qboBillId  String? // 录入成功回填；synced 后靠它回查（契约 G5）
+  qboEntity  String? // 实际录入的 QBO 对象类型：Bill|Purchase（契约 G9）
+  createdAt  DateTime    @default(now())
+  client     Client      @relation(fields: [clientId], references: [id])
+  extraction Extraction?
+  lines      LineItem[]
+  bankTxns   BankTxn[]
+
+  @@unique([firmId, fileHash]) // 收单去重
+  @@index([clientId, status])
+}
+
+model Extraction {
+  id                String    @id @default(cuid())
+  documentId        String    @unique
+  rawJson           Json
+  vendorName        String?
+  invoiceNo         String?
+  txnDate           DateTime?
+  dueDate           DateTime?
+  currency          String?
+  subTotal          Decimal?  @db.Decimal(14, 2)
+  taxAmount         Decimal?  @db.Decimal(14, 2)
+  total             Decimal?  @db.Decimal(14, 2)
+  // 契约 §4.9：CRA 抵扣凭证要件（凭证等级由这些字段实时派生，不物化）
+  supplierTaxNumber String? // 供应商 GST/HST 登记号，$30 以上必需
+  recipientName     String? // 购方名称，$150 以上必需
+  paymentTerms      String? // 付款条款，$150 以上必需
+  fieldConfidence   Json? // OCR 字段级置信度
+  document          Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model LineItem {
+  id            String   @id @default(cuid())
+  documentId    String
+  description   String
+  amount        Decimal  @db.Decimal(14, 2)
+  glAccountId   String? // = QBO Account.Id（契约 G2），非本地代码
+  glAccountName String? // derived 快照：下单时冻结的科目名（契约 §4.4）
+  taxCode       String? // = QBO TaxCode.Id，非显示串
+  confidence    String   @default("low") // domain Confidence
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
+
+// ---- 分类规则 / 学习 ----
+
+model ClassificationRule {
+  id             String   @id @default(cuid())
+  firmId         String
+  clientId       String?
+  matchType      String // domain RuleMatchType: vendor|keyword
+  matchValue     String
+  glAccountId    String // = QBO Account.Id
+  glAccountName  String // derived 快照
+  confirmedCount Int      @default(0) // 人工确认次数，绿色通道条件 1（契约 §4.10）
+  createdAt      DateTime @default(now())
+
+  @@index([firmId, clientId])
+}
+
+// ---- 科目缓存（QBO 为权威，本地为同步副本，契约 G2/§4.4/§4.5）----
+
+model GlAccountCache {
+  id             String   @id @default(cuid())
+  clientId       String
+  qboAccountId   String // canonical id
+  name           String
+  accountType    String
+  accountSubType String?
+  gifiCode       String? // GIFI 挂科目上（契约 §4.5），报税期派生
+  syncedAt       DateTime @default(now()) // cache 回填时点
+  client         Client   @relation(fields: [clientId], references: [id])
+
+  @@unique([clientId, qboAccountId])
+}
+
+// ---- 税码缓存（QBO 为权威，本地为同步副本，契约 §4.8）----
+
+model TaxCodeCache {
+  id           String   @id @default(cuid())
+  clientId     String
+  qboTaxCodeId String // canonical id = QBO TaxCode.Id
+  semanticKey  String? // domain TaxTreatment：规则表输出 → 该客户实际税码的桥（契约 §4.8）
+  name         String
+  rate         Decimal? @db.Decimal(6, 3) // 组合税率快照，展示与校验用；权威在 QBO
+  isGroup      Boolean  @default(false) // group rate（如餐饮 50% 拆分）
+  purchaseUse  Boolean  @default(true) // 可用于采购侧
+  syncedAt     DateTime @default(now())
+  client       Client   @relation(fields: [clientId], references: [id])
+
+  @@unique([clientId, qboTaxCodeId])
+}
+
+// ---- 银行流水 / 对账 ----
+
+model BankTxn {
+  id                String    @id @default(cuid())
+  firmId            String
+  clientId          String
+  date              DateTime
+  description       String
+  amount            Decimal   @db.Decimal(14, 2)
+  matchedDocumentId String? // canonical：人工/自动确认的关联（契约 §4.6）
+  matchStatus       String    @default("unmatched") // domain MatchStatus
+  client            Client    @relation(fields: [clientId], references: [id])
+  matchedDocument   Document? @relation(fields: [matchedDocumentId], references: [id])
+  chaseNotices      ChaseNotice[]
+
+  @@index([clientId])
+}
+
+// ---- 追票工单（契约 §4.12）：只存「催过没有」，是否已解决由匹配状态派生 ----
+
+model ChaseNotice {
+  id        String    @id @default(cuid())
+  firmId    String
+  clientId  String
+  bankTxnId String
+  channel   String // domain NoticeChannel: email|manual
+  recipient String
+  subject   String
+  body      String
+  sentAt    DateTime? // 空 = 只生成未发送（会计师自己转发的场景）
+  sentBy    String
+  createdAt DateTime  @default(now())
+  bankTxn   BankTxn   @relation(fields: [bankTxnId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, bankTxnId])
+}
+
+// ---- 审计 ----
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  firmId     String
+  userId     String
+  documentId String?
+  action     String
+  detail     Json
+  createdAt  DateTime @default(now())
+
+  @@index([firmId, documentId])
+}

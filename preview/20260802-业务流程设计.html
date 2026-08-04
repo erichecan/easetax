@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>易账 · AP 业务流程设计（竞品对照 + 定稿）</title>
+<style>
+  :root{
+    --ink-950:#0b1512; --ink-900:#16211e; --ink-800:#1a3a30; --ink-700:#1f4d3f;
+    --ink-600:#266552; --ink-500:#2e7d5b;
+    --gold-700:#a06d1f; --gold-600:#c88a2e; --gold-100:#f3e6cd; --gold-50:#faf4e8;
+    --paper:#f7f9f8; --surface:#fff; --line:#e6ebe9; --line-strong:#d3dbd8;
+    --muted:#64756f; --faint:#93a19c;
+    --high:#2e7d5b; --high-bg:#e8f3ed; --med:#c88a2e; --med-bg:#faf1df;
+    --low:#c0453b; --low-bg:#f9e7e5;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--paper); color:var(--ink-900);
+    font:16px/1.7 "Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:0 24px 96px}
+
+  /* ---- 头部 ---- */
+  header.top{
+    background:linear-gradient(160deg,var(--ink-800),var(--ink-950));
+    color:#fff; padding:56px 0 44px; margin-bottom:40px;
+  }
+  header.top .wrap{padding-bottom:0}
+  .eyebrow{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#8fbfa9;font-weight:600}
+  h1{font-size:34px;line-height:1.25;margin:12px 0 10px;font-weight:800;letter-spacing:-.02em}
+  header.top p{margin:0;color:#c6d8d0;max-width:64ch}
+  .meta{margin-top:22px;display:flex;flex-wrap:wrap;gap:10px}
+  .meta span{
+    font-size:12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);
+    padding:5px 11px;border-radius:99px;color:#dbe9e3
+  }
+
+  /* ---- 结构 ---- */
+  h2{
+    font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-600);
+    font-weight:700;margin:56px 0 6px;
+  }
+  h2 + .h2sub{margin:0 0 22px;font-size:26px;font-weight:800;letter-spacing:-.01em;line-height:1.3}
+  h3{font-size:17px;font-weight:700;margin:34px 0 12px}
+  p{margin:0 0 14px}
+  strong{font-weight:650}
+  a{color:var(--ink-600)}
+  code{
+    font-family:ui-monospace,"JetBrains Mono",monospace;font-size:.88em;
+    background:var(--paper);border:1px solid var(--line);padding:1px 5px;border-radius:5px
+  }
+  .card code{background:#fff}
+
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px 24px;margin:18px 0;
+  }
+  .card > :last-child{margin-bottom:0}
+
+  /* ---- 表格 ---- */
+  .tablewrap{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14.5px}
+  th,td{padding:11px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+  th{
+    background:var(--paper);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;white-space:nowrap
+  }
+  tbody tr:last-child td{border-bottom:0}
+  td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* ---- 流程图 ---- */
+  .flow{margin:26px 0}
+  .step{
+    display:grid;grid-template-columns:44px 1fr;gap:16px;padding:16px 18px;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px;
+  }
+  .step .n{
+    width:32px;height:32px;border-radius:50%;background:var(--ink-700);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px
+  }
+  .step h4{margin:2px 0 4px;font-size:16px;font-weight:700}
+  .step .when{
+    display:inline-block;font-size:11.5px;font-weight:700;color:var(--ink-600);
+    background:var(--high-bg);padding:2px 9px;border-radius:99px;margin-left:8px;vertical-align:1px
+  }
+  .step p{margin:0;color:var(--muted);font-size:14.5px}
+  .rail{
+    display:grid;grid-template-columns:44px 1fr;gap:16px;margin:-4px 0 6px;
+  }
+  .rail .bar{display:flex;justify-content:center}
+  .rail .bar::before{content:"";width:2px;height:14px;background:var(--line-strong);border-radius:2px}
+
+  .guard{
+    display:grid;grid-template-columns:44px 1fr;gap:16px;padding:15px 18px;margin-bottom:10px;
+    background:var(--gold-50);border:1px solid var(--gold-100);border-radius:var(--radius);
+  }
+  .guard .n{
+    width:32px;height:32px;border-radius:9px;background:var(--gold-600);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px
+  }
+  .guard h4{margin:2px 0 4px;font-size:15px;font-weight:700;color:var(--gold-700)}
+  .guard p{margin:0;font-size:14px;color:#7a5a20}
+
+  /* ---- 判据 / 强调块 ---- */
+  .verdict{
+    border-left:3px solid var(--ink-600);background:var(--high-bg);
+    padding:16px 20px;border-radius:0 var(--radius) var(--radius) 0;margin:20px 0;
+  }
+  .verdict .label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-600);font-weight:700}
+  .verdict p{margin:6px 0 0;font-size:15.5px}
+  .warn{
+    border-left:3px solid var(--low);background:var(--low-bg);
+    padding:16px 20px;border-radius:0 var(--radius) var(--radius) 0;margin:20px 0;
+  }
+  .warn .label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--low);font-weight:700}
+  .warn p{margin:6px 0 0;font-size:15px}
+
+  /* ---- 与门条件 ---- */
+  ol.gate{counter-reset:g;list-style:none;padding:0;margin:16px 0}
+  ol.gate li{
+    counter-increment:g;position:relative;padding:11px 14px 11px 46px;margin-bottom:8px;
+    background:var(--surface);border:1px solid var(--line);border-radius:9px;font-size:14.5px
+  }
+  ol.gate li::before{
+    content:counter(g);position:absolute;left:14px;top:11px;width:20px;height:20px;
+    background:var(--ink-700);color:#fff;border-radius:50%;font-size:11.5px;font-weight:700;
+    display:flex;align-items:center;justify-content:center
+  }
+
+  ul.tight{margin:12px 0;padding-left:20px}
+  ul.tight li{margin-bottom:7px}
+
+  .pill{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:99px}
+  .pill.ok{background:var(--high-bg);color:var(--high)}
+  .pill.no{background:var(--low-bg);color:var(--low)}
+  .pill.mid{background:var(--med-bg);color:var(--med)}
+
+  footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--line);color:var(--faint);font-size:13px}
+
+  @media (max-width:640px){
+    h1{font-size:26px} h2 + .h2sub{font-size:21px}
+    .wrap{padding:0 16px 64px}
+    .step,.guard,.rail{grid-template-columns:32px 1fr;gap:12px}
+    .step .n,.guard .n{width:28px;height:28px;font-size:13px}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="eyebrow">易账 Easetax · 2026-08-02</div>
+    <h1>AP 业务流程设计</h1>
+    <p>在继续写代码前，把「什么时候扫描 / 什么时候审核 / 什么时候进 QuickBooks / 科目与税码怎么定」四件事固定下来。先看竞品实际怎么跑，再定我们的做法。</p>
+    <div class="meta">
+      <span>调研：Dext · Hubdoc · AutoEntry · Ramp · ApprovalMax</span>
+      <span>法规依据：CRA ITC Information Regulations</span>
+      <span>四项裁定已拍板</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <h2>第一部分</h2>
+  <div class="h2sub">竞品实际怎么跑</div>
+
+  <h3>1.1 收单：文档驱动 vs 支出驱动</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>产品</th><th>入口</th><th>触发节奏</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Dext</strong></td><td>手机拍照、专属邮箱转发、供应商门户自动抓取、拖拽上传</td><td>客户随时交，随到随抽取</td></tr>
+        <tr><td><strong>Hubdoc</strong></td><td>强在自动从供应商网站抓账单（水电、电信、银行对账单）</td><td>系统主动抓，客户零动作</td></tr>
+        <tr><td><strong>AutoEntry</strong></td><td>收据、发票、银行对账单都能抽，按额度计费</td><td>批量为主</td></tr>
+        <tr><td><strong>Ramp</strong></td><td>卡消费即产生记录，收据反过来后补</td><td>支出发生即触发</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>行业实务口径一致：银行流水应<strong>每日或每周</strong>处理，不要攒到月末——「每天 5 分钟，攒到月末就是 3 小时且必出错」。</p>
+  <div class="verdict">
+    <div class="label">关键分野</div>
+    <p>Dext / Hubdoc 是<strong>文档驱动</strong>（等票来），Ramp 是<strong>支出驱动</strong>（先有花费，再追票）。支出驱动的完成率高得多，因为缺口是可枚举的。</p>
+  </div>
+
+  <h3>1.2 审核：自动化到哪一步</h3>
+  <ul class="tight">
+    <li><strong>Dext 的规则优先级</strong>：供应商规则 &gt; 自动分类（机器学习）&gt; 账户级默认值。ML 只在供应商规则没填时才填。</li>
+    <li><strong>Auto-publish</strong>：可在供应商级 / 支付方式级 / 全账户级打开，抽取完即推送到会计软件。但业界指导明确警告：只对「规则齐备、科目固定」的供应商开；支付方式级基本不建议开；有审批流时一律不自动发布。</li>
+    <li><strong>AI Assist</strong>：用自然语言写指引处理规则覆盖不了的歧义。例：「Tesco 小票里出现 fuel / petrol / diesel 记差旅-国内、零税率，否则记一般费用」。</li>
+    <li><strong>ApprovalMax + Dext</strong>：Dext 只做抽取，审批流走完才推 QBO，并把审批历史 PDF 一起挂到 Bill 上。</li>
+  </ul>
+  <div class="verdict">
+    <div class="label">市场信号</div>
+    <p>新入场者拿「<strong>字段级置信度</strong> + <strong>强制人工复核门禁</strong>（未批不得过账）+ 每客户规则隔离 + 完整审计轨迹」当卖点 —— 说明 Dext 式自动发布在会计师眼里是有风险敞口的。</p>
+  </div>
+
+  <h3>1.3 进 QuickBooks 的时机与形态</h3>
+  <ul class="tight">
+    <li><strong>Dext</strong>：点 Publish 才进 QBO。发布前必须配好税率默认值，否则 QBO 拒收（QBO 要求每一行都有有效税码）。</li>
+    <li><strong>Ramp</strong>：同步为 Expense；同步后在 Ramp 侧锁定，之后任何修改必须去 QBO 改。</li>
+    <li><strong>ApprovalMax</strong>：审批完成才推，原件 + 审计报告一并作为附件挂到 Bill。</li>
+  </ul>
+  <div class="warn">
+    <div class="label">这里有个我们代码目前踩了的坑</div>
+    <p><strong>已付</strong>的收据应记成 Expense / Purchase（直接冲银行或信用卡），只有<strong>未付</strong>的发票才记 Bill 挂应付账款。选错会导致应付账款虚增、银行对不上。现有代码只会建 Bill。</p>
+  </div>
+
+  <h3>1.4 加拿大税：通用工具管不了的地方</h3>
+  <p>所有竞品都<strong>不靠 AI 猜税码</strong>，走「默认税率 + 供应商规则 + 税码表」。而加拿大特有的三个坑，通用工具基本不处理：</p>
+  <ul class="tight">
+    <li><strong>餐饮招待 50% 限制</strong>：QBO Canada 的标准做法是建 group rate——一半走可抵扣 ITC，一半走计入费用。不是简单选一个 HST 税码。</li>
+    <li><strong>PST / QST 不可抵扣</strong>：只有 GST/HST 部分能抵 ITC，PST 要计入费用成本。</li>
+    <li><strong>CRA 抵扣凭证三档硬要求</strong>：直接决定这张票能不能抵税。</li>
+  </ul>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>票面总额</th><th>必须具备的信息</th></tr></thead>
+      <tbody>
+        <tr><td class="num">&lt; $30</td><td>供应商名 / 商号、日期、总额</td></tr>
+        <tr><td class="num">$30 – $150</td><td>上述 + <strong>供应商 GST/HST 登记号</strong> + 税额或含税声明</td></tr>
+        <tr><td class="num">≥ $150</td><td>上述 + <strong>购方名称</strong>、付款条款、每项供应的描述</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="warn">
+    <div class="label">这就是差异化的入口</div>
+    <p>一张 $200 的票如果没有供应商 GST/HST 号，<strong>这笔 ITC 抵不了</strong>。通用 OCR 工具不管这件事，而会计师每天在踩。</p>
+  </div>
+
+  <h2>第二部分</h2>
+  <div class="h2sub">易账的流程定稿</div>
+
+  <div class="verdict">
+    <div class="label">一句话定位</div>
+    <p>不是「等客户交票」，而是<strong>用银行流水倒逼把票补齐，再把每张票按加拿大税规则记对账</strong>。收单靠客户，完整性靠对账，正确性靠规则 + AI，风险靠 CRA 凭证校验。</p>
+  </div>
+
+  <h3>2.1 主流程</h3>
+  <div class="flow">
+    <div class="step">
+      <div class="n">1</div>
+      <div>
+        <h4>收单<span class="when">随时</span></h4>
+        <p>邮箱转发 / 上传 / 后续手机拍照。文件指纹去重，落 <code>received</code>。</p>
+      </div>
+    </div>
+    <div class="rail"><div class="bar"></div><div></div></div>
+    <div class="step">
+      <div class="n">2</div>
+      <div>
+        <h4>识别<span class="when">收单即触发</span></h4>
+        <p>OCR + 行项目抽取。除金额外，必抽 CRA 要件：供应商名、日期、总额、税额、GST 号、购方名。</p>
+      </div>
+    </div>
+    <div class="rail"><div class="bar"></div><div></div></div>
+    <div class="step">
+      <div class="n">3</div>
+      <div>
+        <h4>定科目、定税码<span class="when">紧随识别</span></h4>
+        <p>科目：供应商规则 → 关键词规则 → AI 逐行 → 人工。税码：确定性规则表，AI 不参与。产出行级科目 + 税码 + 置信度 + 凭证等级。</p>
+      </div>
+    </div>
+    <div class="rail"><div class="bar"></div><div></div></div>
+    <div class="step">
+      <div class="n">4</div>
+      <div>
+        <h4>复核<span class="when">每周，不攒月末</span></h4>
+        <p>队列排序：<strong>凭证风险 &gt; 置信度 &gt; 金额</strong>。符合绿色通道条件的可跳过人工。</p>
+      </div>
+    </div>
+    <div class="rail"><div class="bar"></div><div></div></div>
+    <div class="step">
+      <div class="n">5</div>
+      <div>
+        <h4>录入 QBO<span class="when">确认即录入</span></h4>
+        <p>已付 → Expense，未付 → Bill；原件作附件挂上；<code>synced</code> 后本地转只读，QBO 成为权威。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="guard">
+    <div class="n">A</div>
+    <div>
+      <h4>护栏 A · 银行对账（每周）</h4>
+      <p>逐笔比对银行流水与已收单据，缺收据清单直接变成追票工单。这是收单的主引擎，不是附属功能。</p>
+    </div>
+  </div>
+  <div class="guard">
+    <div class="n">B</div>
+    <div>
+      <h4>护栏 B · CRA 凭证校验（持续）</h4>
+      <p>按金额档校验凭证要件，月末出「不可抵扣清单」。是风险信号不是拦截器——凭证不全照样入账，只是这笔 ITC 不能抵。</p>
+    </div>
+  </div>
+
+  <h3>2.2 四个时机的裁定</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>问题</th><th>裁定</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td>什么时候扫描</td><td><strong>收单即扫</strong>，不排队不批处理</td><td>客户交票时间不可控；识别越早，缺什么越早知道。同步处理也保住 Cloud Run 缩容到零</td></tr>
+        <tr><td>什么时候审核</td><td><strong>按周复核</strong>，按「凭证风险 &gt; 置信度 &gt; 金额」排序</td><td>攒到月末必出错是行业共识；凭证缺陷比科目记错贵</td></tr>
+        <tr><td>什么时候进 QBO</td><td><strong>人工确认即录入</strong>，不等月末批量</td><td>早录入才能让 QBO 的银行对账实时可用；批量出错难定位</td></tr>
+        <tr><td>科目怎么定</td><td>规则 → AI 逐行 → 人工，<strong>AI 只建议不裁定</strong></td><td>与 Dext 优先级一致；AI 的价值在多列异形票据还原与上下文判断</td></tr>
+        <tr><td>税码怎么定</td><td><strong>确定性规则表</strong>，AI 只负责抽取</td><td>科目记错可改，税码记错是税务风险，且规则本身确定</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>2.3 绿色通道：六条与门</h3>
+  <p>竞品的自动发布是「供应商级开关」，太粗。我们用多条件与门，<strong>全部满足</strong>才自动过账：</p>
+  <ol class="gate">
+    <li>命中该客户的供应商规则，且该规则已被<strong>人工确认过 ≥ 3 次</strong></li>
+    <li>所有行的科目置信度 = <span class="pill ok">高</span></li>
+    <li>CRA 凭证等级达标（按金额档该有的字段齐全）</li>
+    <li>金额 ≤ 客户设定阈值（默认 CAD 200）</li>
+    <li>非疑似重复单据</li>
+    <li>所有行税码由规则表命中，<strong>非 AI 推断</strong></li>
+  </ol>
+  <p>任一不满足即进人工复核。自动过账不新增状态，但审计留痕为 <code>auto_confirm</code>、操作者记为 <code>system</code>，并进「已自动过账」抽查列表。会计师可随时对某客户关闭绿色通道。</p>
+
+  <h3>2.4 已付 / 未付的分叉</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>单据形态</th><th>QBO 对象</th><th>判定依据</th></tr></thead>
+      <tbody>
+        <tr><td>收据（已付：刷卡 / 现金）</td><td><span class="pill ok">Purchase / Expense</span> 直接冲银行或信用卡</td><td>OCR 有付款方式、票据类型为 receipt、或已匹配到银行流水</td></tr>
+        <tr><td>供应商发票（未付，有账期）</td><td><span class="pill mid">Bill</span> 挂应付账款，付款后记 Bill Payment</td><td>有到期日 / 付款条款，且未匹配到银行流水</td></tr>
+        <tr><td>信用卡退款 / 贷记单</td><td><span class="pill no">Credit Note / Refund</span></td><td>金额为负</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>第三部分</h2>
+  <div class="h2sub">已裁定与实施顺序</div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>#</th><th>议题</th><th>定论</th><th>写入契约</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td>绿色通道</td><td>做，<strong>六条与门</strong></td><td><code>§4.10</code></td></tr>
+        <tr><td class="num">2</td><td>QBO 对象形态</td><td><strong>已付 → Expense、未付 → Bill</strong>，付款状态落 <code>Document.settlement</code></td><td><code>G9</code></td></tr>
+        <tr><td class="num">3</td><td>收单主模式</td><td><strong>银行流水倒逼追票</strong>为主引擎</td><td>本文护栏 A</td></tr>
+        <tr><td class="num">4</td><td>税码策略</td><td><strong>确定性规则表，AI 不参与</strong>；未命中留空 + 强制人工</td><td><code>G10 · §4.8</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>实施顺序</h3>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>阶段</th><th>内容</th><th>阻塞条件</th></tr></thead>
+      <tbody>
+        <tr><td class="num">F1</td><td>schema 增量（5 处改动）+ migration</td><td><span class="pill ok">无</span></td></tr>
+        <tr><td class="num">F2</td><td>CRA 凭证等级计算 + 复核队列风险排序</td><td><span class="pill no">受 OCR 供应商未定阻塞</span></td></tr>
+        <tr><td class="num">F3</td><td>税码规则表 + TaxCodeCache 同步（含餐饮 group rate）</td><td><span class="pill mid">需真实 QBO 连接</span></td></tr>
+        <tr><td class="num">F4</td><td>录入 QBO：OAuth → Vendor 查建 → 按 settlement 分叉 → 挂附件 → 去重</td><td><span class="pill mid">需 Intuit sandbox 凭据</span></td></tr>
+        <tr><td class="num">F5</td><td>绿色通道（六条与门 + 自动过账审计 + 抽查列表）</td><td><span class="pill no">依赖 F2 / F3 / F4</span></td></tr>
+        <tr><td class="num">F6</td><td>追票工单闭环（缺收据 → 通知客户 → 回传归位）</td><td><span class="pill mid">需邮件发送通道</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="warn">
+    <div class="label">当前最紧的外部阻塞</div>
+    <p>OCR 供应商未定 —— Veryfi 试用已到期（<code>403 trial has ended</code>），F2 起全部受影响。三条路：升级 Veryfi（有最低消费）、换按量计费的 Azure / Google Document AI、或走 <code>ocr_text → Claude</code> 自研解析。</p>
+  </div>
+
+  <footer>
+    易账 Easetax · AP 业务流程设计 · 2026-08-02<br>
+    Markdown 原稿：<code>docs/20260802-业务流程设计.md</code> ｜ 数据契约：<code>docs/20260708-data-ownership-contract.md</code>
+  </footer>
+
+</div>
+</body>
+</html>

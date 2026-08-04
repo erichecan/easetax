@@ -1,16 +1,23 @@
 import { notFound } from "next/navigation";
-import { documentById, clientById, glAccounts } from "@/lib/mock";
+import { requireSession } from "@/lib/session";
+import { getDocumentForReview } from "@/lib/queries";
 import { ReviewWorkbench } from "@/components/review-workbench";
 
-export default async function ReviewPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default async function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
+  const session = await requireSession();
   const { id } = await params;
-  const doc = documentById(id);
-  if (!doc) notFound();
-  const client = clientById(doc.clientId)!;
+  const data = await getDocumentForReview(session.firmId, id);
+  if (!data) notFound();
 
-  return <ReviewWorkbench doc={doc} client={client} accounts={glAccounts} />;
+  return (
+    <ReviewWorkbench
+      doc={data.doc}
+      client={data.client}
+      accounts={data.accounts}
+      taxCodes={data.taxCodes}
+      ocrText={data.ocrText}
+      nextDocId={data.nextDocId}
+      remainingCount={data.remainingCount}
+    />
+  );
 }

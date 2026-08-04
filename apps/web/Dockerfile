@@ -8,6 +8,10 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Prisma client 不在 npm ci 时生成（package.json 没有 postinstall），
+# 不显式生成的话 next build 会因为 @prisma/client 未初始化而失败。
+# Prisma 7 的 datasource 不带 url，generate 不需要 DATABASE_URL。
+RUN npx prisma generate
 RUN npm run build
 
 FROM node:20-alpine AS runner
