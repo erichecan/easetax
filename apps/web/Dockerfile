@@ -2,14 +2,13 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-# 这里**不能**用 npm ci：package-lock.json 是在 macOS 上生成的，而
+# package-lock.json 必须在 linux 上生成，否则这里会挂：
 # @tailwindcss/oxide-wasm32-wasi（optional，cpu=wasm32）的子树依赖
-# （@emnapi/core、@emnapi/runtime）在 macOS 上从不被解析，所以没进 lock。
-# linux 的 npm ci 会校验这些条目并报 EUSAGE «Missing ... from lock file»。
-# 改用 npm install，在目标平台重新解析。
-# 代价：构建不再严格锁定到 lock 文件。
-# TODO: 在 linux 上重新生成 lock（CI 里跑 npm install --package-lock-only 并提交）后换回 npm ci。
-RUN npm install --no-audit --no-fund
+# （@emnapi/core、@emnapi/runtime）在 macOS 上从不被解析、进不了 lock，
+# 而 linux 的 npm ci 会校验它们并报 EUSAGE «Missing ... from lock file»。
+# 当前 lock 是在 ubuntu 上生成的，macOS 与 linux 的 npm ci 都实测通过。
+# 若日后有人在 macOS 上跑 npm install 并提交 lock，这一步会再次失败 —— 到时在 linux 上重生成。
+RUN npm ci --no-audit --no-fund
 
 FROM node:20-alpine AS builder
 WORKDIR /app
