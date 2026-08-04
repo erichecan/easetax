@@ -1,0 +1,41 @@
+# 临时工作流：在 linux 上重新生成 package-lock.json 并作为 artifact 上传。
+# 用途见 apps/web/Dockerfile 里的 TODO —— macOS 生成的 lock 缺 wasm32 子树依赖，
+# linux 的 npm ci 会报 EUSAGE。验证完 linux lock 是否跨平台可用后即可删除本文件。
+# 只上传 artifact，不写回仓库 —— 不需要给工作流授予写权限。
+name: Regenerate lockfile on linux
+on:
+  workflow_dispatch:
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 重新生成 lock
+        working-directory: apps/web
+        run: |
+          cp package-lock.json /tmp/lock-before.json
+          rm -f package-lock.json
+          npm install --package-lock-only --no-audit --no-fund
+          echo "--- 生成前后包数量对比 ---"
+          node -e "
+            const a=require('/tmp/lock-before.json').packages;
+            const b=require('./package-lock.json').packages;
+            console.log('macOS 生成的 lock 包数:', Object.keys(a).length);
+            console.log('linux 生成的 lock 包数:', Object.keys(b).length);
+            const lost=Object.keys(a).filter(k=>!(k in b));
+            const gained=Object.keys(b).filter(k=>!(k in a));
+            console.log('linux 版丢失的条目数:', lost.length);
+            console.log('linux 版新增的条目数:', gained.length);
+            console.log('丢失样例:', lost.slice(0,12));
+            console.log('新增样例:', gained.slice(0,12));
+          "
+      - name: 用新 lock 验证 npm ci 能过
+        working-directory: apps/web
+        run: npm ci --no-audit --no-fund && echo "✅ linux 上 npm ci 通过"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: apps/web/package-lock.json
