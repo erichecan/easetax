@@ -15,10 +15,13 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Prisma client 不在 npm ci 时生成（package.json 没有 postinstall），
+# Prisma client 不在依赖安装时生成（package.json 没有 postinstall），
 # 不显式生成的话 next build 会因为 @prisma/client 未初始化而失败。
-# Prisma 7 的 datasource 不带 url，generate 不需要 DATABASE_URL。
-RUN npx prisma generate
+#
+# schema.prisma 的 datasource 确实不带 url，但 prisma.config.ts 在**加载时**就调
+# env("DATABASE_URL")，缺了直接抛 PrismaConfigEnvError。generate 只读 schema、不连库，
+# 给个占位串即可。仅存在于 builder 阶段，不进最终镜像（runner 只拷 .next 产物）。
+RUN DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" npx prisma generate
 RUN npm run build
 
 FROM node:20-alpine AS runner
