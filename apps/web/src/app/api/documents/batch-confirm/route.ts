@@ -1,11 +1,11 @@
-import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/session";
 import { prisma } from "@/lib/db";
-import { assertTransition, type DocStatus } from "@/domain";
+import { confirmDocument } from "@/lib/pipeline/confirm";
 
 // 批量确认。只确认「已经齐全」的单据 —— 批量操作不该顺手替人做判断，
 // 缺科目或缺税码的必须回到复核台一张张处理。
 // 逐条处理并逐条报错：一张失败不该让其余 N-1 张也白干。
+// 确认与学习飞轮走 lib/pipeline/confirm.ts，与单张确认共用同一份语义。
 const MAX_BATCH = 100;
 
 export async function POST(req: Request) {
@@ -18,7 +18,7 @@ export async function POST(req: Request) {
 
   const docs = await prisma.document.findMany({
     where: { id: { in: ids }, firmId: s.firmId },
-    include: { lines: true, extraction: true },
+    include: { lines: true },
   });
 
   const confirmed: string[] = [];
@@ -40,55 +40,15 @@ export async function POST(req: Request) {
     }
 
     try {
-      assertTransition(doc.status as DocStatus, "confirmed");
-      await prisma.$transaction([
-        prisma.lineItem.updateMany({ where: { documentId: doc.id }, data: { confidence: "high" } }),
-        prisma.document.update({ where: { id: doc.id }, data: { status: "confirmed" } }),
-      ]);
-
-      // 学习飞轮与单张确认保持一致：整单同科目才写规则，且计数只在人工确认时加
-      const vendor = doc.extraction?.vendorName?.trim();
-      const accts = new Set(doc.lines.map((l) => l.glAccountId!));
-      if (vendor && accts.size === 1) {
-        const glAccountId = [...accts][0];
-        const glAccountName = doc.lines[0].glAccountName ?? "";
-        const existing = await prisma.classificationRule.findFirst({
-          where: { firmId: s.firmId, clientId: doc.clientId, matchType: "vendor", matchValue: vendor },
-        });
-        if (existing) {
-          await prisma.classificationRule.update({
-            where: { id: existing.id },
-            data: {
-              glAccountId,
-              glAccountName,
-              confirmedCount: existing.glAccountId === glAccountId ? { increment: 1 } : 1,
-            },
-          });
-        } else {
-          await prisma.classificationRule.create({
-            data: {
-              firmId: s.firmId,
-              clientId: doc.clientId,
-              matchType: "vendor",
-              matchValue: vendor,
-              glAccountId,
-              glAccountName,
-              confirmedCount: 1,
-            },
-          });
-        }
-      }
-
-      await prisma.auditLog.create({
-        data: {
-          firmId: s.firmId,
-          userId: s.userId,
-          documentId: doc.id,
-          action: "status:needs_review->confirmed",
-          detail: { batch: true } as Prisma.InputJsonValue,
-        },
+      // 不传 assignments → 沿用行上已有的科目/税码（上面已校验齐全）
+      const r = await confirmDocument({
+        documentId: doc.id,
+        firmId: s.firmId,
+        userId: s.userId,
+        auditContext: { batch: true },
       });
-      confirmed.push(doc.id);
+      if (r.ok) confirmed.push(doc.id);
+      else failed.push({ documentId: doc.id, fileName: doc.fileName, reason: r.error });
     } catch (e) {
       failed.push({
         documentId: doc.id,
