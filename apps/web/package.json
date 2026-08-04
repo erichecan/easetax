@@ -10,7 +10,8 @@
     "seed": "node --env-file=.env --import tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "test": "node --test --import tsx \"src/**/*.test.ts\"",
-    "verify:qbo": "node --env-file=.env --import tsx scripts/verify-qbo.ts"
+    "verify:qbo": "node --env-file=.env --import tsx scripts/verify-qbo.ts",
+    "verify:ocr": "node --env-file=.env --import tsx scripts/verify-ocr.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
